@@ -1,0 +1,18 @@
+[package]
+name = "loadwhat"
+version = "0.1.0"
+edition = "2021"
+description = "Lightweight Windows DLL loading diagnostics for no-GUI environments."
+license = "MIT"
+readme = "README.md"
+keywords = ["windows", "dll", "debugger", "cli", "diagnostics"]
+categories = ["command-line-utilities", "development-tools::debugging"]
+
+[dependencies]
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
