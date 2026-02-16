@@ -15,6 +15,7 @@ pub struct RunOptions {
     pub exe_args: Vec<OsString>,
     pub cwd: Option<PathBuf>,
     pub timeout_ms: u32,
+    pub verbose: bool,
 }
 
 #[derive(Debug)]
@@ -60,6 +61,7 @@ fn parse_run(values: &[OsString]) -> Result<Command, String> {
     let mut cwd = None;
     let mut timeout_ms = 30_000;
     let mut exe_args = Vec::new();
+    let mut verbose = false;
 
     let mut i = 1usize;
     while i < values.len() {
@@ -87,7 +89,13 @@ fn parse_run(values: &[OsString]) -> Result<Command, String> {
                     .parse::<u32>()
                     .map_err(|_| format!("invalid --timeout-ms value: {raw}\n\n{}", usage()))?;
             }
-            "--quiet" | "--verbose" | "--strict" => {}
+            "--verbose" | "-v" => {
+                verbose = true;
+            }
+            "--quiet" => {
+                verbose = false;
+            }
+            "--strict" => {}
             unknown => {
                 return Err(format!("unknown run option: {unknown}\n\n{}", usage()));
             }
@@ -101,6 +109,7 @@ fn parse_run(values: &[OsString]) -> Result<Command, String> {
         exe_args,
         cwd,
         timeout_ms,
+        verbose,
     }))
 }
 
@@ -139,7 +148,9 @@ pub fn usage() -> String {
     let mut out = String::new();
     out.push_str("loadwhat - diagnose Windows DLL loading failures\n\n");
     out.push_str("Usage:\n");
-    out.push_str("  loadwhat run <exe_path> [--cwd <dir>] [--timeout-ms <n>] [-- <args...>]\n");
+    out.push_str(
+        "  loadwhat run <exe_path> [--cwd <dir>] [--timeout-ms <n>] [-v|--verbose] [-- <args...>]\n",
+    );
     out.push_str("  loadwhat imports <exe_or_dll> [--cwd <dir>]\n");
     out.push_str("  loadwhat help\n");
     out
@@ -166,6 +177,17 @@ mod tests {
             Command::Run(opts) => {
                 assert_eq!(opts.timeout_ms, 1234);
                 assert_eq!(opts.exe_args.len(), 1);
+            }
+            _ => panic!("expected run command"),
+        }
+    }
+
+    #[test]
+    fn parses_run_verbose_short_flag() {
+        let cmd = parse_from(["loadwhat", "run", "notepad.exe", "-v"]).unwrap();
+        match cmd {
+            Command::Run(opts) => {
+                assert!(opts.verbose);
             }
             _ => panic!("expected run command"),
         }

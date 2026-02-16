@@ -31,7 +31,7 @@ use debug_run::{RunEndKind, RunOutcome};
 #[cfg(windows)]
 use emit::{emit, field, hex_u32, hex_usize, quote};
 #[cfg(windows)]
-use search::{ResolutionKind, SearchContext};
+use search::{CandidateResult, ResolutionKind, SearchContext};
 
 #[cfg(windows)]
 fn main() {
@@ -61,7 +61,7 @@ fn main() {
 
 #[cfg(windows)]
 fn run_command(opts: RunOptions) -> i32 {
-    let exe_path = match normalize_existing_path(&opts.exe_path) {
+    let exe_path = match normalize_existing_run_target(&opts.exe_path) {
         Ok(p) => p,
         Err(err) => {
             eprintln!("{err}");
@@ -81,7 +81,9 @@ fn run_command(opts: RunOptions) -> i32 {
             }
         };
 
-    emit_run_events(&exe_path, &cwd, &outcome);
+    if opts.verbose {
+        emit_run_events(&exe_path, &cwd, &outcome);
+    }
 
     let loaded_names: HashSet<String> = outcome
         .loaded_modules
@@ -105,70 +107,118 @@ fn run_command(opts: RunOptions) -> i32 {
         } else {
             "MEDIUM"
         };
-        let diag = diagnose_static_imports(
-            &exe_path,
-            &cwd,
-            &loaded_names,
-            env_path_override(&[]),
-            confidence,
-        );
+        let mode = if opts.verbose {
+            StaticEmitMode::Full
+        } else {
+            StaticEmitMode::FailuresOnly
+        };
+        let diag =
+            diagnose_static_imports(&exe_path, &cwd, &loaded_names, env_path_override(&[]), mode);
         match diag {
             Ok(report) => {
                 missing_or_bad = report.missing_or_bad;
-                if let Some(issue) = report.first_issue {
+                if let Some(issue) = &report.first_issue {
                     first_break = true;
-                    emit(
-                        "FIRST_BREAK",
-                        &vec![
-                            field(
-                                "observed_exit_kind",
-                                quote(match outcome.end_kind {
-                                    RunEndKind::ExitProcess => "EXIT_PROCESS",
-                                    RunEndKind::Exception => "EXCEPTION",
-                                    RunEndKind::Timeout => "TIMEOUT",
-                                }),
-                            ),
-                            field(
-                                "observed_code",
-                                match loader_exception {
-                                    Some(code) => hex_u32(code),
-                                    None => hex_u32(outcome.exit_code.unwrap_or(0)),
-                                },
-                            ),
-                            field("diagnosis", quote(issue.diagnosis)),
-                            field("dll", quote(&issue.dll)),
-                            field("confidence", quote(confidence)),
-                        ],
-                    );
+                    if opts.verbose {
+                        emit(
+                            "FIRST_BREAK",
+                            &vec![
+                                field(
+                                    "observed_exit_kind",
+                                    quote(match outcome.end_kind {
+                                        RunEndKind::ExitProcess => "EXIT_PROCESS",
+                                        RunEndKind::Exception => "EXCEPTION",
+                                        RunEndKind::Timeout => "TIMEOUT",
+                                    }),
+                                ),
+                                field(
+                                    "observed_code",
+                                    match loader_exception {
+                                        Some(code) => hex_u32(code),
+                                        None => hex_u32(outcome.exit_code.unwrap_or(0)),
+                                    },
+                                ),
+                                field("diagnosis", quote(issue.diagnosis)),
+                                field("dll", quote(&issue.dll)),
+                                field("confidence", quote(confidence)),
+                            ],
+                        );
+                    } else {
+                        emit(
+                            "SEARCH_ORDER",
+                            &vec![field("safedll", if report.safedll { "1" } else { "0" })],
+                        );
+                        match issue.kind {
+                            ResolutionKind::Missing => {
+                                emit(
+                                    "STATIC_MISSING",
+                                    &vec![
+                                        field("module", quote(&issue.module)),
+                                        field("dll", quote(&issue.dll)),
+                                        field("reason", quote("NOT_FOUND")),
+                                    ],
+                                );
+                            }
+                            ResolutionKind::BadImage => {
+                                emit(
+                                    "STATIC_BAD_IMAGE",
+                                    &vec![
+                                        field("module", quote(&issue.module)),
+                                        field("dll", quote(&issue.dll)),
+                                        field("reason", quote("BAD_IMAGE")),
+                                    ],
+                                );
+                            }
+                            ResolutionKind::Found => {}
+                        }
+                        for candidate in &issue.candidates {
+                            emit(
+                                "SEARCH_PATH",
+                                &vec![
+                                    field("dll", quote(&issue.dll)),
+                                    field("order", candidate.order.to_string()),
+                                    field("path", quote(&display_path(&candidate.path))),
+                                    field("result", quote(candidate.result)),
+                                ],
+                            );
+                        }
+                    }
                 }
             }
             Err(err) => {
-                emit(
-                    "NOTE",
-                    &vec![field(
-                        "detail",
-                        quote(&format!("static diagnosis failed: {err}")),
-                    )],
-                );
+                if opts.verbose {
+                    emit(
+                        "NOTE",
+                        &vec![field(
+                            "detail",
+                            quote(&format!("static diagnosis failed: {err}")),
+                        )],
+                    );
+                } else {
+                    eprintln!("{err}");
+                }
             }
         }
     }
 
-    emit(
-        "SUMMARY",
-        &vec![
-            field("first_break", if first_break { "true" } else { "false" }),
-            field("missing_static", missing_or_bad.to_string()),
-            field("runtime_loaded", outcome.loaded_modules.len().to_string()),
-            field("com_issues", "0"),
-        ],
-    );
+    if opts.verbose {
+        emit(
+            "SUMMARY",
+            &vec![
+                field("first_break", if first_break { "true" } else { "false" }),
+                field("missing_static", missing_or_bad.to_string()),
+                field("runtime_loaded", outcome.loaded_modules.len().to_string()),
+                field("com_issues", "0"),
+            ],
+        );
+    }
 
     if missing_or_bad > 0 {
         10
     } else {
         match outcome.end_kind {
             RunEndKind::ExitProcess if outcome.exit_code == Some(0) => 0,
+            RunEndKind::Timeout if !outcome.loaded_modules.is_empty() => 0,
             RunEndKind::ExitProcess | RunEndKind::Exception | RunEndKind::Timeout => 21,
         }
     }
@@ -192,7 +242,7 @@ fn imports_command(opts: ImportsOptions) -> i32 {
         &cwd,
         &HashSet::new(),
         env_path_override(&[]),
-        "HIGH",
+        StaticEmitMode::Full,
     );
     match diag {
         Ok(report) => {
@@ -272,14 +322,25 @@ fn emit_run_events(exe_path: &Path, cwd: &Path, outcome: &RunOutcome) {
 
 #[cfg(windows)]
 struct FirstIssue {
+    module: String,
     dll: String,
     diagnosis: &'static str,
+    kind: ResolutionKind,
+    candidates: Vec<CandidateResult>,
 }
 
 #[cfg(windows)]
 struct StaticReport {
     missing_or_bad: usize,
     first_issue: Option<FirstIssue>,
+    safedll: bool,
+}
+
+#[cfg(windows)]
+#[derive(Clone, Copy)]
+enum StaticEmitMode {
+    Full,
+    FailuresOnly,
 }
 
 #[cfg(windows)]
@@ -288,7 +349,7 @@ fn diagnose_static_imports(
     cwd: &Path,
     runtime_loaded: &HashSet<String>,
     path_env_override: Option<OsString>,
-    _confidence: &'static str,
+    emit_mode: StaticEmitMode,
 ) -> Result<StaticReport, String> {
     let app_dir = module_path.parent().ok_or_else(|| {
         format!(
@@ -303,127 +364,154 @@ fn diagnose_static_imports(
         .map(|v| v.to_string_lossy().to_string())
         .unwrap_or_else(|| module_path.display().to_string());
 
-    emit(
-        "STATIC_START",
-        &vec![
-            field("module", quote(&display_path(module_path))),
-            field("scope", quote("direct-imports")),
-        ],
-    );
-    emit(
-        "SEARCH_ORDER",
-        &vec![field("safedll", if context.safedll { "1" } else { "0" })],
-    );
+    if matches!(emit_mode, StaticEmitMode::Full) {
+        emit(
+            "STATIC_START",
+            &vec![
+                field("module", quote(&display_path(module_path))),
+                field("scope", quote("direct-imports")),
+            ],
+        );
+        emit(
+            "SEARCH_ORDER",
+            &vec![field("safedll", if context.safedll { "1" } else { "0" })],
+        );
+    }
 
     let mut missing = 0usize;
     let mut first_issue = None;
 
     for dll in imports {
-        emit(
-            "STATIC_IMPORT",
-            &vec![
-                field("module", quote(&module_name)),
-                field("needs", quote(&dll)),
-            ],
-        );
-
-        if runtime_loaded.contains(&dll) {
+        if matches!(emit_mode, StaticEmitMode::Full) {
             emit(
-                "STATIC_FOUND",
+                "STATIC_IMPORT",
                 &vec![
                     field("module", quote(&module_name)),
-                    field("dll", quote(&dll)),
-                    field("reason", quote("RUNTIME_OBSERVED")),
-                ],
-            );
-            continue;
-        }
-
-        let resolution = search::resolve_dll(&dll, &context);
-        for candidate in &resolution.candidates {
-            emit(
-                "SEARCH_PATH",
-                &vec![
-                    field("dll", quote(&dll)),
-                    field("order", candidate.order.to_string()),
-                    field("path", quote(&display_path(&candidate.path))),
-                    field("result", quote(candidate.result)),
+                    field("needs", quote(&dll)),
                 ],
             );
         }
 
-        match resolution.kind {
-            ResolutionKind::Found => {
+        if runtime_loaded.contains(&dll) {
+            if matches!(emit_mode, StaticEmitMode::Full) {
                 emit(
                     "STATIC_FOUND",
                     &vec![
                         field("module", quote(&module_name)),
                         field("dll", quote(&dll)),
-                        field(
-                            "path",
-                            quote(
-                                &resolution
-                                    .chosen
-                                    .as_ref()
-                                    .map(|v| display_path(v))
-                                    .unwrap_or_else(|| String::from("UNKNOWN")),
-                            ),
-                        ),
+                        field("reason", quote("RUNTIME_OBSERVED")),
                     ],
                 );
+            }
+            continue;
+        }
+
+        let resolution = search::resolve_dll(&dll, &context);
+        if matches!(emit_mode, StaticEmitMode::Full) {
+            for candidate in &resolution.candidates {
+                emit(
+                    "SEARCH_PATH",
+                    &vec![
+                        field("dll", quote(&dll)),
+                        field("order", candidate.order.to_string()),
+                        field("path", quote(&display_path(&candidate.path))),
+                        field("result", quote(candidate.result)),
+                    ],
+                );
+            }
+        }
+
+        match &resolution.kind {
+            ResolutionKind::Found => {
+                if matches!(emit_mode, StaticEmitMode::Full) {
+                    emit(
+                        "STATIC_FOUND",
+                        &vec![
+                            field("module", quote(&module_name)),
+                            field("dll", quote(&dll)),
+                            field(
+                                "path",
+                                quote(
+                                    &resolution
+                                        .chosen
+                                        .as_ref()
+                                        .map(|v| display_path(v))
+                                        .unwrap_or_else(|| String::from("UNKNOWN")),
+                                ),
+                            ),
+                        ],
+                    );
+                }
             }
             ResolutionKind::Missing => {
                 missing += 1;
                 if first_issue.is_none() {
                     first_issue = Some(FirstIssue {
+                        module: module_name.clone(),
                         dll: dll.clone(),
                         diagnosis: "MISSING_STATIC_IMPORT",
+                        kind: ResolutionKind::Missing,
+                        candidates: resolution.candidates.clone(),
                     });
                 }
-                emit(
-                    "STATIC_MISSING",
-                    &vec![
-                        field("module", quote(&module_name)),
-                        field("dll", quote(&dll)),
-                        field("reason", quote("NOT_FOUND")),
-                    ],
-                );
+                if matches!(emit_mode, StaticEmitMode::Full) {
+                    emit(
+                        "STATIC_MISSING",
+                        &vec![
+                            field("module", quote(&module_name)),
+                            field("dll", quote(&dll)),
+                            field("reason", quote("NOT_FOUND")),
+                        ],
+                    );
+                }
             }
             ResolutionKind::BadImage => {
                 missing += 1;
                 if first_issue.is_none() {
                     first_issue = Some(FirstIssue {
+                        module: module_name.clone(),
                         dll: dll.clone(),
                         diagnosis: "BAD_STATIC_IMPORT_IMAGE",
+                        kind: ResolutionKind::BadImage,
+                        candidates: resolution.candidates.clone(),
                     });
                 }
-                emit(
-                    "STATIC_BAD_IMAGE",
-                    &vec![
-                        field("module", quote(&module_name)),
-                        field("dll", quote(&dll)),
-                        field("reason", quote("BAD_IMAGE")),
-                    ],
-                );
+                if matches!(emit_mode, StaticEmitMode::Full) {
+                    emit(
+                        "STATIC_BAD_IMAGE",
+                        &vec![
+                            field("module", quote(&module_name)),
+                            field("dll", quote(&dll)),
+                            field("reason", quote("BAD_IMAGE")),
+                        ],
+                    );
+                }
             }
+        }
+
+        if matches!(emit_mode, StaticEmitMode::FailuresOnly) && first_issue.is_some() {
+            break;
         }
     }
 
-    emit(
-        "NOTE",
-        &vec![field(
-            "detail",
-            quote("KnownDLLs/SxS/AddDllDirectory not modeled in v1"),
-        )],
-    );
-    emit(
-        "STATIC_END",
-        &vec![field("module", quote(&display_path(module_path)))],
-    );
+    if matches!(emit_mode, StaticEmitMode::Full) {
+        emit(
+            "NOTE",
+            &vec![field(
+                "detail",
+                quote("KnownDLLs/SxS/AddDllDirectory not modeled in v1"),
+            )],
+        );
+        emit(
+            "STATIC_END",
+            &vec![field("module", quote(&display_path(module_path)))],
+        );
+    }
 
     Ok(StaticReport {
         missing_or_bad: missing,
         first_issue,
+        safedll: context.safedll,
     })
 }
 
@@ -439,6 +527,36 @@ fn normalize_existing_path(path: &Path) -> Result<PathBuf, String> {
             .map_err(|e| format!("failed to read current directory: {e}"))?;
         Ok(base.join(path))
     }
+}
+
+#[cfg(windows)]
+fn normalize_existing_run_target(path: &Path) -> Result<PathBuf, String> {
+    if path.exists() {
+        return normalize_existing_path(path);
+    }
+
+    if path.components().count() == 1 {
+        let mut names = Vec::new();
+        names.push(path.as_os_str().to_os_string());
+        if path.extension().is_none() {
+            let mut with_exe = path.as_os_str().to_os_string();
+            with_exe.push(".exe");
+            names.push(with_exe);
+        }
+
+        if let Some(path_env) = std::env::var_os("PATH") {
+            for dir in std::env::split_paths(&path_env) {
+                for name in &names {
+                    let candidate = dir.join(name);
+                    if candidate.exists() {
+                        return Ok(candidate);
+                    }
+                }
+            }
+        }
+    }
+
+    Err(format!("path does not exist: {}", path.display()))
 }
 
 #[cfg(windows)]

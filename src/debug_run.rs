@@ -99,7 +99,7 @@ pub fn run_target(
         let ok = unsafe { win::WaitForDebugEvent(&mut event as *mut win::DebugEvent, wait_ms) };
         if ok == 0 {
             let code = unsafe { win::GetLastError() };
-            if code == win::WAIT_TIMEOUT {
+            if code == win::WAIT_TIMEOUT || code == win::ERROR_SEM_TIMEOUT {
                 continue;
             }
             close_if_needed(pi.h_thread);

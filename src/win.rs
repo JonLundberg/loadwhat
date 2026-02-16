@@ -20,6 +20,7 @@ pub type Lpcwstr = *const u16;
 
 pub const DEBUG_ONLY_THIS_PROCESS: Dword = 0x00000002;
 pub const WAIT_TIMEOUT: Dword = 258;
+pub const ERROR_SEM_TIMEOUT: Dword = 121;
 pub const DBG_CONTINUE: Dword = 0x00010002;
 pub const DBG_EXCEPTION_NOT_HANDLED: Dword = 0x80010001;
 pub const INVALID_HANDLE_VALUE: Handle = -1isize as Handle;
