@@ -6,6 +6,9 @@ use std::time::Instant;
 
 use crate::win;
 
+const STATUS_BREAKPOINT: u32 = 0x8000_0003;
+const STATUS_SINGLE_STEP: u32 = 0x8000_0004;
+
 #[derive(Clone)]
 pub struct LoadedModule {
     pub dll_name: String,
@@ -78,6 +81,7 @@ pub fn run_target(
     let mut loaded_modules = Vec::new();
     let mut exit_code = None;
     let mut exception_code = None;
+    let mut saw_terminal_exception = false;
     let mut saw_exit = false;
     let mut timeout_hit = false;
 
@@ -136,14 +140,23 @@ pub fn run_target(
             }
             win::EXCEPTION_DEBUG_EVENT => {
                 let info = unsafe { event_data::<win::ExceptionDebugInfo>(&event) };
-                if info.dw_first_chance == 0 {
-                    exception_code = Some(info.exception_record.exception_code);
+                let code = info.exception_record.exception_code;
+                if code == STATUS_BREAKPOINT || code == STATUS_SINGLE_STEP {
+                    continue_status = win::DBG_CONTINUE;
+                } else {
+                    if info.dw_first_chance == 0 {
+                        exception_code = Some(code);
+                        saw_terminal_exception = true;
+                    }
+                    continue_status = win::DBG_EXCEPTION_NOT_HANDLED;
                 }
-                continue_status = win::DBG_EXCEPTION_NOT_HANDLED;
             }
             win::EXIT_PROCESS_DEBUG_EVENT => {
                 let info = unsafe { event_data::<win::ExitProcessDebugInfo>(&event) };
                 exit_code = Some(info.dw_exit_code);
+                if exception_code.is_none() && (info.dw_exit_code & 0x8000_0000) != 0 {
+                    exception_code = Some(info.dw_exit_code);
+                }
                 saw_exit = true;
             }
             _ => {}
@@ -162,14 +175,14 @@ pub fn run_target(
     close_if_needed(pi.h_process);
 
     let end_kind = if saw_exit {
-        if exception_code.is_some() {
+        if saw_terminal_exception {
             RunEndKind::Exception
         } else {
             RunEndKind::ExitProcess
         }
     } else if timeout_hit {
         RunEndKind::Timeout
-    } else if exception_code.is_some() {
+    } else if saw_terminal_exception {
         RunEndKind::Exception
     } else {
         RunEndKind::Timeout
