@@ -11,6 +11,8 @@ mod debug_run;
 #[cfg(windows)]
 mod emit;
 #[cfg(windows)]
+mod loader_snaps;
+#[cfg(windows)]
 mod pe;
 #[cfg(windows)]
 mod search;
@@ -27,9 +29,11 @@ use std::path::{Path, PathBuf};
 #[cfg(windows)]
 use cli::{Command, ImportsOptions, RunOptions};
 #[cfg(windows)]
-use debug_run::{RunEndKind, RunOutcome};
+use debug_run::{RunEndKind, RunOutcome, RuntimeEvent};
 #[cfg(windows)]
 use emit::{emit, field, hex_u32, hex_usize, quote};
+#[cfg(windows)]
+use loader_snaps::LoaderSnapsGuard;
 #[cfg(windows)]
 use search::{CandidateResult, ResolutionKind, SearchContext};
 
@@ -72,14 +76,51 @@ fn run_command(opts: RunOptions) -> i32 {
         .cwd
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
-    let outcome =
-        match debug_run::run_target(&exe_path, &opts.exe_args, Some(&cwd), opts.timeout_ms) {
-            Ok(value) => value,
-            Err(err) => {
-                eprintln!("{err}");
+    let mut snaps_guard = if opts.loader_snaps {
+        let image_name = exe_path
+            .file_name()
+            .map(|v| v.to_string_lossy().to_string())
+            .unwrap_or_default();
+        match LoaderSnapsGuard::enable_for_image(&image_name) {
+            Ok(guard) => Some(guard),
+            Err(code) => {
+                emit(
+                    "NOTE",
+                    &vec![
+                        field("topic", quote("loader-snaps")),
+                        field("detail", quote("enable-failed")),
+                        field("code", hex_u32(code)),
+                    ],
+                );
                 return 21;
             }
-        };
+        }
+    } else {
+        None
+    };
+
+    let outcome = debug_run::run_target(&exe_path, &opts.exe_args, Some(&cwd), opts.timeout_ms);
+
+    if let Some(mut guard) = snaps_guard.take() {
+        if let Err(code) = guard.restore() {
+            emit(
+                "NOTE",
+                &vec![
+                    field("topic", quote("loader-snaps")),
+                    field("detail", quote("restore-failed")),
+                    field("code", hex_u32(code)),
+                ],
+            );
+        }
+    }
+
+    let outcome = match outcome {
+        Ok(value) => value,
+        Err(err) => {
+            eprintln!("{err}");
+            return 21;
+        }
+    };
 
     if opts.verbose {
         emit_run_events(&exe_path, &cwd, &outcome);
@@ -279,25 +320,40 @@ fn emit_run_events(exe_path: &Path, cwd: &Path, outcome: &RunOutcome) {
         ],
     );
 
-    for module in &outcome.loaded_modules {
-        emit(
-            "RUNTIME_LOADED",
-            &vec![
-                field("pid", outcome.pid.to_string()),
-                field("dll", quote(&module.dll_name)),
-                field(
-                    "path",
-                    quote(
-                        &module
-                            .path
-                            .as_ref()
-                            .map(|p| display_path(p))
-                            .unwrap_or_else(|| "UNKNOWN".to_string()),
-                    ),
-                ),
-                field("base", hex_usize(module.base)),
-            ],
-        );
+    for event in &outcome.runtime_events {
+        match event {
+            RuntimeEvent::RuntimeLoaded(module) => {
+                emit(
+                    "RUNTIME_LOADED",
+                    &vec![
+                        field("pid", outcome.pid.to_string()),
+                        field("dll", quote(&module.dll_name)),
+                        field(
+                            "path",
+                            quote(
+                                &module
+                                    .path
+                                    .as_ref()
+                                    .map(|p| display_path(p))
+                                    .unwrap_or_else(|| "UNKNOWN".to_string()),
+                            ),
+                        ),
+                        field("base", hex_usize(module.base)),
+                    ],
+                );
+            }
+            RuntimeEvent::DebugString(debug) => {
+                emit(
+                    "DEBUG_STRING",
+                    &vec![
+                        field("pid", debug.pid.to_string()),
+                        field("tid", debug.tid.to_string()),
+                        field("source", quote("OUTPUT_DEBUG_STRING_EVENT")),
+                        field("text", quote(&debug.text)),
+                    ],
+                );
+            }
+        }
     }
 
     let exit_kind = match outcome.end_kind {

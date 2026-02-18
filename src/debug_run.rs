@@ -16,6 +16,19 @@ pub struct LoadedModule {
     pub base: usize,
 }
 
+#[derive(Clone)]
+pub struct DebugStringEvent {
+    pub pid: u32,
+    pub tid: u32,
+    pub text: String,
+}
+
+#[derive(Clone)]
+pub enum RuntimeEvent {
+    RuntimeLoaded(LoadedModule),
+    DebugString(DebugStringEvent),
+}
+
 #[derive(Clone, Copy)]
 pub enum RunEndKind {
     ExitProcess,
@@ -25,6 +38,7 @@ pub enum RunEndKind {
 
 pub struct RunOutcome {
     pub pid: u32,
+    pub runtime_events: Vec<RuntimeEvent>,
     pub loaded_modules: Vec<LoadedModule>,
     pub end_kind: RunEndKind,
     pub exit_code: Option<u32>,
@@ -78,6 +92,7 @@ pub fn run_target(
     }
 
     let start = Instant::now();
+    let mut runtime_events = Vec::new();
     let mut loaded_modules = Vec::new();
     let mut exit_code = None;
     let mut exception_code = None;
@@ -131,12 +146,30 @@ pub fn run_target(
                     .map(|v| v.to_string_lossy().to_string())
                     .unwrap_or_else(|| format!("UNKNOWN_{:016X}", info.lp_base_of_dll as usize));
 
-                loaded_modules.push(LoadedModule {
+                let module = LoadedModule {
                     dll_name,
                     path,
                     base: info.lp_base_of_dll as usize,
-                });
+                };
+                loaded_modules.push(module.clone());
+                runtime_events.push(RuntimeEvent::RuntimeLoaded(module));
                 close_if_needed(info.h_file);
+            }
+            win::OUTPUT_DEBUG_STRING_EVENT => {
+                let info = unsafe { event_data::<win::OutputDebugStringInfo>(&event) };
+                let text = read_output_debug_string(
+                    pi.h_process,
+                    info.lp_debug_string_data,
+                    info.f_unicode != 0,
+                    info.n_debug_string_length,
+                )
+                .unwrap_or_else(|| "UNREADABLE".to_string());
+
+                runtime_events.push(RuntimeEvent::DebugString(DebugStringEvent {
+                    pid: event.dw_process_id,
+                    tid: event.dw_thread_id,
+                    text,
+                }));
             }
             win::EXCEPTION_DEBUG_EVENT => {
                 let info = unsafe { event_data::<win::ExceptionDebugInfo>(&event) };
@@ -190,12 +223,79 @@ pub fn run_target(
 
     Ok(RunOutcome {
         pid: pi.dw_process_id,
+        runtime_events,
         loaded_modules,
         end_kind,
         exit_code,
         exception_code,
         elapsed_ms: start.elapsed().as_millis(),
     })
+}
+
+fn read_output_debug_string(
+    process: win::Handle,
+    data_ptr: win::Lpvoid,
+    unicode: bool,
+    length_chars: u16,
+) -> Option<String> {
+    if process.is_null() || data_ptr.is_null() {
+        return None;
+    }
+
+    let max_chars = 16 * 1024usize;
+    let chars = usize::from(length_chars);
+    if chars == 0 {
+        if unicode {
+            return read_remote_utf16(process, data_ptr as *const std::ffi::c_void);
+        }
+        return read_remote_ansi(process, data_ptr as *const std::ffi::c_void);
+    }
+    let chars = chars.min(max_chars);
+
+    if unicode {
+        let bytes_to_read = chars.checked_mul(2)?;
+        let mut data = vec![0u16; chars];
+        let mut bytes_read = 0usize;
+        let ok = unsafe {
+            win::ReadProcessMemory(
+                process,
+                data_ptr as win::Lpcvoid,
+                data.as_mut_ptr().cast::<std::ffi::c_void>(),
+                bytes_to_read,
+                &mut bytes_read as *mut usize,
+            )
+        };
+        if ok == 0 || bytes_read == 0 {
+            return None;
+        }
+
+        let units = bytes_read / std::mem::size_of::<u16>();
+        let content = &data[..units.min(data.len())];
+        let end = content
+            .iter()
+            .position(|v| *v == 0)
+            .unwrap_or(content.len());
+        return Some(OsString::from_wide(&content[..end]).to_string_lossy().to_string());
+    }
+
+    let mut data = vec![0u8; chars];
+    let mut bytes_read = 0usize;
+    let ok = unsafe {
+        win::ReadProcessMemory(
+            process,
+            data_ptr as win::Lpcvoid,
+            data.as_mut_ptr().cast::<std::ffi::c_void>(),
+            chars,
+            &mut bytes_read as *mut usize,
+        )
+    };
+    if ok == 0 || bytes_read == 0 {
+        return None;
+    }
+
+    data.truncate(bytes_read.min(data.len()));
+    let end = data.iter().position(|v| *v == 0).unwrap_or(data.len());
+    Some(String::from_utf8_lossy(&data[..end]).to_string())
 }
 
 unsafe fn event_data<T: Copy>(event: &win::DebugEvent) -> T {

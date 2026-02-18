@@ -29,10 +29,14 @@ pub const EXCEPTION_DEBUG_EVENT: Dword = 1;
 pub const CREATE_PROCESS_DEBUG_EVENT: Dword = 3;
 pub const EXIT_PROCESS_DEBUG_EVENT: Dword = 5;
 pub const LOAD_DLL_DEBUG_EVENT: Dword = 6;
+pub const OUTPUT_DEBUG_STRING_EVENT: Dword = 8;
 
 pub const HKEY_LOCAL_MACHINE: Hkey = 0x80000002u32 as isize;
 pub const KEY_READ: Regsam = 0x00020019;
+pub const KEY_SET_VALUE: Regsam = 0x00000002;
 pub const REG_DWORD: Dword = 4;
+pub const REG_OPTION_NON_VOLATILE: Dword = 0;
+pub const ERROR_FILE_NOT_FOUND: Dword = 2;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -118,6 +122,14 @@ pub struct LoadDllDebugInfo {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
+pub struct OutputDebugStringInfo {
+    pub lp_debug_string_data: Lpvoid,
+    pub f_unicode: Word,
+    pub n_debug_string_length: Word,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
 pub struct DebugEvent {
     pub dw_debug_event_code: Dword,
     pub dw_process_id: Dword,
@@ -181,6 +193,18 @@ extern "system" {
         phk_result: *mut Hkey,
     ) -> i32;
 
+    pub fn RegCreateKeyExW(
+        h_key: Hkey,
+        lp_sub_key: Lpcwstr,
+        reserved: Dword,
+        lp_class: Lpwstr,
+        dw_options: Dword,
+        sam_desired: Regsam,
+        lp_security_attributes: Lpvoid,
+        phk_result: *mut Hkey,
+        lpdw_disposition: *mut Dword,
+    ) -> i32;
+
     pub fn RegQueryValueExW(
         h_key: Hkey,
         lp_value_name: Lpcwstr,
@@ -189,6 +213,17 @@ extern "system" {
         lp_data: *mut Byte,
         lpcb_data: *mut Dword,
     ) -> i32;
+
+    pub fn RegSetValueExW(
+        h_key: Hkey,
+        lp_value_name: Lpcwstr,
+        reserved: Dword,
+        dw_type: Dword,
+        lp_data: *const Byte,
+        cb_data: Dword,
+    ) -> i32;
+
+    pub fn RegDeleteValueW(h_key: Hkey, lp_value_name: Lpcwstr) -> i32;
 
     pub fn RegCloseKey(h_key: Hkey) -> i32;
 }

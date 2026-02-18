@@ -15,6 +15,7 @@ pub struct RunOptions {
     pub exe_args: Vec<OsString>,
     pub cwd: Option<PathBuf>,
     pub timeout_ms: u32,
+    pub loader_snaps: bool,
     pub verbose: bool,
 }
 
@@ -60,6 +61,7 @@ fn parse_run(values: &[OsString]) -> Result<Command, String> {
     let exe_path = PathBuf::from(values[0].clone());
     let mut cwd = None;
     let mut timeout_ms = 30_000;
+    let mut loader_snaps = false;
     let mut exe_args = Vec::new();
     let mut verbose = false;
 
@@ -92,6 +94,9 @@ fn parse_run(values: &[OsString]) -> Result<Command, String> {
             "--verbose" | "-v" => {
                 verbose = true;
             }
+            "--loader-snaps" => {
+                loader_snaps = true;
+            }
             "--quiet" => {
                 verbose = false;
             }
@@ -109,6 +114,7 @@ fn parse_run(values: &[OsString]) -> Result<Command, String> {
         exe_args,
         cwd,
         timeout_ms,
+        loader_snaps,
         verbose,
     }))
 }
@@ -149,7 +155,7 @@ pub fn usage() -> String {
     out.push_str("loadwhat - diagnose Windows DLL loading failures\n\n");
     out.push_str("Usage:\n");
     out.push_str(
-        "  loadwhat run <exe_path> [--cwd <dir>] [--timeout-ms <n>] [-v|--verbose] [-- <args...>]\n",
+        "  loadwhat run <exe_path> [--cwd <dir>] [--timeout-ms <n>] [--loader-snaps] [-v|--verbose] [-- <args...>]\n",
     );
     out.push_str("  loadwhat imports <exe_or_dll> [--cwd <dir>]\n");
     out.push_str("  loadwhat help\n");
@@ -188,6 +194,17 @@ mod tests {
         match cmd {
             Command::Run(opts) => {
                 assert!(opts.verbose);
+            }
+            _ => panic!("expected run command"),
+        }
+    }
+
+    #[test]
+    fn parses_run_loader_snaps_flag() {
+        let cmd = parse_from(["loadwhat", "run", "notepad.exe", "--loader-snaps"]).unwrap();
+        match cmd {
+            Command::Run(opts) => {
+                assert!(opts.loader_snaps);
             }
             _ => panic!("expected run command"),
         }
