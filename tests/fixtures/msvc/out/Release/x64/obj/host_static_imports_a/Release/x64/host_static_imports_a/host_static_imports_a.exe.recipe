@@ -1,0 +1,17 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project>
+  <ProjectOutputs>
+    <ProjectOutput>
+      <FullPath>C:\Users\jonlu\source\LoadWhat\v1\loadwhat\tests\fixtures\msvc\out\Release\x64\lwtest_b.dll</FullPath>
+    </ProjectOutput>
+    <ProjectOutput>
+      <FullPath>C:\Users\jonlu\source\LoadWhat\v1\loadwhat\tests\fixtures\msvc\out\Release\x64\lwtest_a.dll</FullPath>
+    </ProjectOutput>
+    <ProjectOutput>
+      <FullPath>C:\Users\jonlu\source\LoadWhat\v1\loadwhat\tests\fixtures\msvc\out\Release\x64\host_static_imports_a.exe</FullPath>
+    </ProjectOutput>
+  </ProjectOutputs>
+  <ContentFiles />
+  <SatelliteDlls />
+  <NonRecipeFileRefs />
+</Project>
