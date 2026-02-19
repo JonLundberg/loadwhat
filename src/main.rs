@@ -29,7 +29,7 @@ use std::path::{Path, PathBuf};
 #[cfg(windows)]
 use cli::{Command, ImportsOptions, RunOptions};
 #[cfg(windows)]
-use debug_run::{RunEndKind, RunOutcome, RuntimeEvent};
+use debug_run::{RunEndKind, RunError, RunOutcome, RuntimeEvent};
 #[cfg(windows)]
 use emit::{emit, field, hex_u32, hex_usize, quote};
 #[cfg(windows)]
@@ -76,30 +76,59 @@ fn run_command(opts: RunOptions) -> i32 {
         .cwd
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
-    let mut snaps_guard = if opts.loader_snaps {
-        let image_name = exe_path
-            .file_name()
-            .map(|v| v.to_string_lossy().to_string())
-            .unwrap_or_default();
-        match LoaderSnapsGuard::enable_for_image(&image_name) {
-            Ok(guard) => Some(guard),
-            Err(code) => {
-                emit(
-                    "NOTE",
-                    &vec![
-                        field("topic", quote("loader-snaps")),
-                        field("detail", quote("enable-failed")),
-                        field("code", hex_u32(code)),
-                    ],
-                );
-                return 21;
+    let (outcome, mut snaps_guard) = if opts.loader_snaps {
+        match debug_run::run_target(&exe_path, &opts.exe_args, Some(&cwd), opts.timeout_ms, true) {
+            Ok(value) => (Ok(value), None),
+            Err(RunError::PebLoaderSnapsEnableFailed(peb_code)) => {
+                let image_name = exe_path
+                    .file_name()
+                    .map(|v| v.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                let guard = match LoaderSnapsGuard::enable_for_image(&image_name) {
+                    Ok(guard) => guard,
+                    Err(code) => {
+                        emit(
+                            "NOTE",
+                            &vec![
+                                field("topic", quote("loader-snaps")),
+                                field("detail", quote("enable-failed")),
+                                field("code", hex_u32(code)),
+                            ],
+                        );
+                        return 21;
+                    }
+                };
+
+                if opts.verbose {
+                    emit(
+                        "NOTE",
+                        &vec![
+                            field("topic", quote("loader-snaps")),
+                            field("detail", quote("peb-enable-failed")),
+                            field("code", hex_u32(peb_code)),
+                        ],
+                    );
+                }
+
+                (
+                    debug_run::run_target(
+                        &exe_path,
+                        &opts.exe_args,
+                        Some(&cwd),
+                        opts.timeout_ms,
+                        false,
+                    ),
+                    Some(guard),
+                )
             }
+            Err(err) => (Err(err), None),
         }
     } else {
-        None
+        (
+            debug_run::run_target(&exe_path, &opts.exe_args, Some(&cwd), opts.timeout_ms, false),
+            None,
+        )
     };
-
-    let outcome = debug_run::run_target(&exe_path, &opts.exe_args, Some(&cwd), opts.timeout_ms);
 
     if let Some(mut guard) = snaps_guard.take() {
         if let Err(code) = guard.restore() {
@@ -116,8 +145,12 @@ fn run_command(opts: RunOptions) -> i32 {
 
     let outcome = match outcome {
         Ok(value) => value,
-        Err(err) => {
+        Err(RunError::Message(err)) => {
             eprintln!("{err}");
+            return 21;
+        }
+        Err(RunError::PebLoaderSnapsEnableFailed(code)) => {
+            eprintln!("loader-snaps PEB enable failed: 0x{code:08X}");
             return 21;
         }
     };

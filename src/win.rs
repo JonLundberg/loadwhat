@@ -17,6 +17,7 @@ pub type Lpvoid = *mut c_void;
 pub type Lpcvoid = *const c_void;
 pub type Lpwstr = *mut u16;
 pub type Lpcwstr = *const u16;
+pub type Ntstatus = i32;
 
 pub const DEBUG_ONLY_THIS_PROCESS: Dword = 0x00000002;
 pub const WAIT_TIMEOUT: Dword = 258;
@@ -30,6 +31,7 @@ pub const CREATE_PROCESS_DEBUG_EVENT: Dword = 3;
 pub const EXIT_PROCESS_DEBUG_EVENT: Dword = 5;
 pub const LOAD_DLL_DEBUG_EVENT: Dword = 6;
 pub const OUTPUT_DEBUG_STRING_EVENT: Dword = 8;
+pub const PROCESS_BASIC_INFORMATION_CLASS: u32 = 0;
 
 pub const HKEY_LOCAL_MACHINE: Hkey = 0x80000002u32 as isize;
 pub const KEY_READ: Regsam = 0x00020019;
@@ -130,6 +132,16 @@ pub struct OutputDebugStringInfo {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
+pub struct ProcessBasicInformation {
+    pub reserved1: Lpvoid,
+    pub peb_base_address: Lpvoid,
+    pub reserved2: [Lpvoid; 2],
+    pub unique_process_id: usize,
+    pub inherited_from_unique_process_id: usize,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
 pub struct DebugEvent {
     pub dw_debug_event_code: Dword,
     pub dw_process_id: Dword,
@@ -171,6 +183,16 @@ extern "system" {
         n_size: SizeT,
         lp_number_of_bytes_read: *mut SizeT,
     ) -> Bool;
+
+    pub fn WriteProcessMemory(
+        h_process: Handle,
+        lp_base_address: Lpvoid,
+        lp_buffer: Lpcvoid,
+        n_size: SizeT,
+        lp_number_of_bytes_written: *mut SizeT,
+    ) -> Bool;
+
+    pub fn TerminateProcess(h_process: Handle, u_exit_code: Uint) -> Bool;
 
     pub fn GetFinalPathNameByHandleW(
         h_file: Handle,
@@ -226,6 +248,17 @@ extern "system" {
     pub fn RegDeleteValueW(h_key: Hkey, lp_value_name: Lpcwstr) -> i32;
 
     pub fn RegCloseKey(h_key: Hkey) -> i32;
+}
+
+#[link(name = "ntdll")]
+extern "system" {
+    pub fn NtQueryInformationProcess(
+        process_handle: Handle,
+        process_information_class: u32,
+        process_information: Lpvoid,
+        process_information_length: u32,
+        return_length: *mut u32,
+    ) -> Ntstatus;
 }
 
 pub fn to_wide(value: &OsStr) -> Vec<u16> {

@@ -4,7 +4,7 @@ use std::os::windows::ffi::OsStringExt;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use crate::win;
+use crate::{loader_snaps, win};
 
 const STATUS_BREAKPOINT: u32 = 0x8000_0003;
 const STATUS_SINGLE_STEP: u32 = 0x8000_0004;
@@ -46,14 +46,23 @@ pub struct RunOutcome {
     pub elapsed_ms: u128,
 }
 
+pub enum RunError {
+    Message(String),
+    PebLoaderSnapsEnableFailed(u32),
+}
+
 pub fn run_target(
     exe_path: &Path,
     exe_args: &[OsString],
     cwd: Option<&Path>,
     timeout_ms: u32,
-) -> Result<RunOutcome, String> {
+    enable_loader_snaps_peb: bool,
+) -> Result<RunOutcome, RunError> {
     if !exe_path.exists() {
-        return Err(format!("target does not exist: {}", exe_path.display()));
+        return Err(RunError::Message(format!(
+            "target does not exist: {}",
+            exe_path.display()
+        )));
     }
 
     let app_w = win::to_wide(exe_path.as_os_str());
@@ -85,10 +94,21 @@ pub fn run_target(
 
     if created == 0 {
         let code = unsafe { win::GetLastError() };
-        return Err(format!(
+        return Err(RunError::Message(format!(
             "CreateProcessW failed for {}: 0x{code:08X}",
             exe_path.display()
-        ));
+        )));
+    }
+
+    if enable_loader_snaps_peb {
+        if let Err(code) = loader_snaps::enable_via_peb(pi.h_process) {
+            unsafe {
+                let _ = win::TerminateProcess(pi.h_process, code);
+            }
+            close_if_needed(pi.h_thread);
+            close_if_needed(pi.h_process);
+            return Err(RunError::PebLoaderSnapsEnableFailed(code));
+        }
     }
 
     let start = Instant::now();
@@ -123,7 +143,9 @@ pub fn run_target(
             }
             close_if_needed(pi.h_thread);
             close_if_needed(pi.h_process);
-            return Err(format!("WaitForDebugEvent failed: 0x{code:08X}"));
+            return Err(RunError::Message(format!(
+                "WaitForDebugEvent failed: 0x{code:08X}"
+            )));
         }
 
         let mut continue_status = win::DBG_CONTINUE;
@@ -442,5 +464,61 @@ fn read_remote_ansi(process: win::Handle, mut ptr: *const std::ffi::c_void) -> O
         None
     } else {
         Some(String::from_utf8_lossy(&data).to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{run_target, RunError, RuntimeEvent};
+    use std::ffi::OsString;
+    use std::path::PathBuf;
+
+    fn system_exe(name: &str) -> PathBuf {
+        let windir = std::env::var_os("WINDIR").unwrap_or_else(|| "C:\\Windows".into());
+        PathBuf::from(windir).join("System32").join(name)
+    }
+
+    #[test]
+    fn run_target_missing_path_returns_message_error() {
+        let missing = PathBuf::from(r"C:\__loadwhat_tests__\definitely_missing.exe");
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let result = run_target(&missing, &[], Some(&cwd), 1000, false);
+        match result {
+            Err(RunError::Message(msg)) => {
+                assert!(msg.contains("target does not exist"));
+            }
+            _ => panic!("expected missing-path RunError::Message"),
+        }
+    }
+
+    #[test]
+    fn run_target_loader_snaps_peb_captures_debug_strings() {
+        let exe = system_exe("cmd.exe");
+        assert!(exe.exists(), "expected {} to exist", exe.display());
+
+        let args = vec![
+            OsString::from("/C"),
+            OsString::from("exit"),
+            OsString::from("0"),
+        ];
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let result = run_target(&exe, &args, Some(&cwd), 10_000, true);
+        let outcome = match result {
+            Ok(value) => value,
+            Err(RunError::PebLoaderSnapsEnableFailed(code)) => {
+                panic!("PEB loader-snaps enable failed: 0x{code:08X}")
+            }
+            Err(RunError::Message(msg)) => panic!("run_target failed: {msg}"),
+        };
+
+        let debug_count = outcome
+            .runtime_events
+            .iter()
+            .filter(|event| matches!(event, RuntimeEvent::DebugString(_)))
+            .count();
+        assert!(
+            debug_count > 0,
+            "expected at least one DEBUG_STRING event with loader-snaps enabled"
+        );
     }
 }

@@ -1,10 +1,14 @@
 use std::ffi::OsStr;
+use std::mem;
 
 use crate::win;
 
 const FLG_SHOW_LDR_SNAPS: u32 = 0x0000_0002;
 const IFEO_BASE: &str = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options";
 const GLOBAL_FLAG_VALUE: &str = "GlobalFlag";
+const PEB_NT_GLOBAL_FLAG_OFFSET_X64: usize = 0xBC;
+const ERROR_INVALID_PARAMETER: u32 = 87;
+const ERROR_PARTIAL_COPY: u32 = 299;
 
 pub struct LoaderSnapsGuard {
     key_path: String,
@@ -70,6 +74,40 @@ impl Drop for LoaderSnapsGuard {
     fn drop(&mut self) {
         let _ = self.restore();
     }
+}
+
+pub fn enable_via_peb(process: win::Handle) -> Result<(), u32> {
+    if process.is_null() {
+        return Err(ERROR_INVALID_PARAMETER);
+    }
+
+    let mut pbi: win::ProcessBasicInformation = unsafe { mem::zeroed() };
+    let mut return_length: u32 = 0;
+    let status = unsafe {
+        win::NtQueryInformationProcess(
+            process,
+            win::PROCESS_BASIC_INFORMATION_CLASS,
+            (&mut pbi as *mut win::ProcessBasicInformation).cast::<std::ffi::c_void>(),
+            mem::size_of::<win::ProcessBasicInformation>() as u32,
+            &mut return_length as *mut u32,
+        )
+    };
+    if status < 0 {
+        return Err(status as u32);
+    }
+    if pbi.peb_base_address.is_null() {
+        return Err(ERROR_INVALID_PARAMETER);
+    }
+
+    let nt_global_flag_addr =
+        (pbi.peb_base_address as usize + PEB_NT_GLOBAL_FLAG_OFFSET_X64) as win::Lpvoid;
+    let current = read_u32(process, nt_global_flag_addr as win::Lpcvoid)?;
+    let updated = current | FLG_SHOW_LDR_SNAPS;
+    if updated != current {
+        write_u32(process, nt_global_flag_addr, updated)?;
+    }
+
+    Ok(())
 }
 
 fn open_or_create_key(path: &str) -> Result<win::Hkey, u32> {
@@ -184,5 +222,63 @@ fn close_key(key: win::Hkey) {
     }
     unsafe {
         let _ = win::RegCloseKey(key);
+    }
+}
+
+fn read_u32(process: win::Handle, address: win::Lpcvoid) -> Result<u32, u32> {
+    let mut value = 0u32;
+    let mut bytes_read = 0usize;
+    let ok = unsafe {
+        win::ReadProcessMemory(
+            process,
+            address,
+            (&mut value as *mut u32).cast::<std::ffi::c_void>(),
+            mem::size_of::<u32>(),
+            &mut bytes_read as *mut usize,
+        )
+    };
+    if ok == 0 {
+        return Err(unsafe { win::GetLastError() });
+    }
+    if bytes_read != mem::size_of::<u32>() {
+        return Err(ERROR_PARTIAL_COPY);
+    }
+    Ok(value)
+}
+
+fn write_u32(process: win::Handle, address: win::Lpvoid, value: u32) -> Result<(), u32> {
+    let mut bytes_written = 0usize;
+    let ok = unsafe {
+        win::WriteProcessMemory(
+            process,
+            address,
+            (&value as *const u32).cast::<std::ffi::c_void>(),
+            mem::size_of::<u32>(),
+            &mut bytes_written as *mut usize,
+        )
+    };
+    if ok == 0 {
+        return Err(unsafe { win::GetLastError() });
+    }
+    if bytes_written != mem::size_of::<u32>() {
+        return Err(ERROR_PARTIAL_COPY);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{enable_via_peb, LoaderSnapsGuard};
+
+    #[test]
+    fn enable_for_image_rejects_empty_name() {
+        let result = LoaderSnapsGuard::enable_for_image("");
+        assert_eq!(result.err(), Some(87));
+    }
+
+    #[test]
+    fn enable_via_peb_rejects_null_process() {
+        let result = enable_via_peb(std::ptr::null_mut());
+        assert_eq!(result.err(), Some(87));
     }
 }
