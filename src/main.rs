@@ -22,6 +22,8 @@ mod win;
 #[cfg(windows)]
 use std::collections::HashSet;
 #[cfg(windows)]
+use std::env;
+#[cfg(windows)]
 use std::ffi::OsString;
 #[cfg(windows)]
 use std::path::{Path, PathBuf};
@@ -29,7 +31,7 @@ use std::path::{Path, PathBuf};
 #[cfg(windows)]
 use cli::{Command, ImportsOptions, RunOptions};
 #[cfg(windows)]
-use debug_run::{RunEndKind, RunError, RunOutcome, RuntimeEvent};
+use debug_run::{LoadedModule, RunEndKind, RunError, RunOutcome, RuntimeEvent};
 #[cfg(windows)]
 use emit::{emit, field, hex_u32, hex_usize, quote};
 #[cfg(windows)]
@@ -65,6 +67,8 @@ fn main() {
 
 #[cfg(windows)]
 fn run_command(opts: RunOptions) -> i32 {
+    let test_mode = test_mode_enabled();
+
     let exe_path = match normalize_existing_run_target(&opts.exe_path) {
         Ok(p) => p,
         Err(err) => {
@@ -95,7 +99,7 @@ fn run_command(opts: RunOptions) -> i32 {
                                 field("code", hex_u32(code)),
                             ],
                         );
-                        return 21;
+                        return if test_mode { 10 } else { 21 };
                     }
                 };
 
@@ -147,11 +151,11 @@ fn run_command(opts: RunOptions) -> i32 {
         Ok(value) => value,
         Err(RunError::Message(err)) => {
             eprintln!("{err}");
-            return 21;
+            return if test_mode { 10 } else { 21 };
         }
         Err(RunError::PebLoaderSnapsEnableFailed(code)) => {
             eprintln!("loader-snaps PEB enable failed: 0x{code:08X}");
-            return 21;
+            return if test_mode { 10 } else { 21 };
         }
     };
 
@@ -167,6 +171,7 @@ fn run_command(opts: RunOptions) -> i32 {
 
     let mut first_break = false;
     let mut missing_or_bad = 0usize;
+    let mut detected_missing_name: Option<String> = None;
     let loader_exception = outcome
         .exception_code
         .filter(|code| is_loader_related_code(*code));
@@ -193,6 +198,10 @@ fn run_command(opts: RunOptions) -> i32 {
                 missing_or_bad = report.missing_or_bad;
                 if let Some(issue) = &report.first_issue {
                     first_break = true;
+                    if detected_missing_name.is_none() {
+                        detected_missing_name = normalize_dll_basename(&issue.dll)
+                            .or_else(|| Some(issue.dll.to_ascii_lowercase()));
+                    }
                     if opts.verbose {
                         emit(
                             "FIRST_BREAK",
@@ -273,6 +282,17 @@ fn run_command(opts: RunOptions) -> i32 {
                 }
             }
         }
+    }
+
+    if test_mode && detected_missing_name.is_none() {
+        detected_missing_name = detect_missing_lwtest_dll_from_debug_strings(&outcome);
+    }
+
+    if test_mode {
+        emit_lwtest_lines(&outcome.loaded_modules, detected_missing_name.as_deref(), outcome.exit_code);
+        let load_failure_detected =
+            detected_missing_name.is_some() || missing_or_bad > 0 || loader_exception.is_some();
+        return test_mode_exit_code(&outcome, load_failure_detected);
     }
 
     if opts.verbose {
@@ -646,6 +666,123 @@ fn normalize_existing_run_target(path: &Path) -> Result<PathBuf, String> {
     }
 
     Err(format!("path does not exist: {}", path.display()))
+}
+
+#[cfg(windows)]
+fn test_mode_enabled() -> bool {
+    env::var("LOADWHAT_TEST_MODE")
+        .map(|v| v.trim() == "1")
+        .unwrap_or(false)
+}
+
+#[cfg(windows)]
+fn emit_lwtest_lines(modules: &[LoadedModule], missing_name: Option<&str>, exit_code: Option<u32>) {
+    for module in modules {
+        let dll_name = module.dll_name.to_ascii_lowercase();
+        if !dll_name.starts_with("lwtest_") {
+            continue;
+        }
+        let Some(path) = module.path.as_ref() else {
+            continue;
+        };
+        emit(
+            "LWTEST:LOAD",
+            &vec![
+                field("name", dll_name),
+                field("path", display_path(path)),
+            ],
+        );
+    }
+
+    if let Some(name) = missing_name {
+        emit(
+            "LWTEST:RESULT",
+            &vec![
+                field("kind", "missing_dll"),
+                field("name", name.to_ascii_lowercase()),
+            ],
+        );
+    }
+
+    if let Some(code) = exit_code {
+        emit("LWTEST:TARGET", &vec![field("exit_code", code.to_string())]);
+    }
+}
+
+#[cfg(windows)]
+fn test_mode_exit_code(outcome: &RunOutcome, load_failure_detected: bool) -> i32 {
+    if matches!(outcome.end_kind, RunEndKind::Timeout) {
+        return 3;
+    }
+    if load_failure_detected || matches!(outcome.end_kind, RunEndKind::Exception) {
+        return 2;
+    }
+    0
+}
+
+#[cfg(windows)]
+fn detect_missing_lwtest_dll_from_debug_strings(outcome: &RunOutcome) -> Option<String> {
+    for event in &outcome.runtime_events {
+        let RuntimeEvent::DebugString(debug) = event else {
+            continue;
+        };
+
+        let text = debug.text.to_ascii_lowercase();
+        let looks_like_missing =
+            text.contains("error")
+                || text.contains("not found")
+                || text.contains("unable to load")
+                || text.contains("status: 0xc0000135")
+                || text.contains("status=0xc0000135")
+                || text.contains("0x8007007e");
+        if !looks_like_missing {
+            continue;
+        }
+
+        if let Some(name) = extract_lwtest_dll_name(&text) {
+            return Some(name);
+        }
+    }
+    None
+}
+
+#[cfg(windows)]
+fn extract_lwtest_dll_name(text: &str) -> Option<String> {
+    let mut offset = 0usize;
+    while let Some(found) = text[offset..].find("lwtest_") {
+        let start = offset + found;
+        let remaining = &text[start..];
+        let Some(dll_end_rel) = remaining.find(".dll") else {
+            offset = start + "lwtest_".len();
+            continue;
+        };
+
+        let end = start + dll_end_rel + 4;
+        let candidate = &text[start..end];
+        if let Some(name) = normalize_dll_basename(candidate) {
+            return Some(name);
+        }
+        offset = end;
+    }
+    None
+}
+
+#[cfg(windows)]
+fn normalize_dll_basename(value: &str) -> Option<String> {
+    let trimmed = value.trim_matches(|c: char| c == '"' || c == '\'' || c.is_whitespace());
+    let basename = trimmed.rsplit(['\\', '/']).next().unwrap_or(trimmed);
+    let cleaned = basename
+        .trim_matches(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-'));
+    if cleaned.is_empty() {
+        return None;
+    }
+
+    let lower = cleaned.to_ascii_lowercase();
+    if lower.starts_with("lwtest_") && lower.ends_with(".dll") {
+        Some(lower)
+    } else {
+        None
+    }
 }
 
 #[cfg(windows)]

@@ -1,0 +1,20 @@
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <LWTEST_OUTDIR Condition="'$(LWTEST_OUTDIR)'==''">$(SolutionDir)out\$(Configuration)\$(Platform)\</LWTEST_OUTDIR>
+    <OutDir>$(LWTEST_OUTDIR)</OutDir>
+    <IntDir>$(LWTEST_OUTDIR)obj\$(ProjectName)\$(Configuration)\$(Platform)\$(TargetName)\</IntDir>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <WarningLevel>Level3</WarningLevel>
+      <ConformanceMode>true</ConformanceMode>
+      <SDLCheck>true</SDLCheck>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+    </Link>
+  </ItemDefinitionGroup>
+</Project>

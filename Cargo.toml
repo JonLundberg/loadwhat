@@ -10,6 +10,9 @@ categories = ["command-line-utilities", "development-tools::debugging"]
 
 [dependencies]
 
+[workspace]
+members = [".", "xtask"]
+
 [profile.release]
 opt-level = "z"
 lto = true
