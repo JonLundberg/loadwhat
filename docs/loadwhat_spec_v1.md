@@ -87,17 +87,23 @@ Then:
 ## 3) Loader Snaps mode (`run --loader-snaps`)
 
 When `--loader-snaps` is present:
-- Before process launch, set `FLG_SHOW_LDR_SNAPS` (`0x00000002`) in:
-  - `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\<ImageName>\GlobalFlag`
-- Preserve the original value (including "value absent"), then restore it after run completion.
-- Restoration is mandatory best effort on all terminal paths (normal exit, exception, timeout, internal error).
+- Enable `FLG_SHOW_LDR_SNAPS` (`0x00000002`) using **AUTO** mode:
+  1) Preferred (process-local, no registry): after `CreateProcessW` succeeds and before continuing the initial loader path, set `PEB->NtGlobalFlag |= 0x2` via `NtQueryInformationProcess(ProcessBasicInformation)` plus `ReadProcessMemory` / `WriteProcessMemory`.
+  2) Fallback (gflags-style, persistent): set:
+     `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\<ImageName>\GlobalFlag`
+     preserving the original value (including "value absent"), then restore after run completion.
+- Restoration is mandatory best effort on all terminal paths (normal exit, exception, timeout, internal error). If IFEO fallback was used, restore the original IFEO value.
 
 Failure behavior:
-- If enabling loader snaps fails, emit:
+- If enabling loader snaps fails (PEB enable failed and IFEO fallback failed), emit:
 ```text
 NOTE topic="loader-snaps" detail="enable-failed" code=0x...
 ```
 - Then terminate command with exit code `21`.
+- If PEB enable failed but IFEO fallback succeeded, emit in verbose mode:
+```text
+NOTE topic="loader-snaps" detail="peb-enable-failed" code=0x...
+```
 - If restore fails, emit:
 ```text
 NOTE topic="loader-snaps" detail="restore-failed" code=0x...
@@ -108,6 +114,7 @@ and continue normal result handling.
 - Read event text from target process memory using event metadata.
 - Honor Unicode/ANSI flag.
 - Emit as `DEBUG_STRING`.
+- Do not introduce a `SNAPS_*` token family in v1; loader snaps output is represented through `DEBUG_STRING`.
 - If text cannot be read, emit `DEBUG_STRING` with `text="UNREADABLE"` and continue.
 
 ---
