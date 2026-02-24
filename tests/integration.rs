@@ -11,3 +11,5 @@ mod static_wrong_pick;
 mod dynamic_loadlibrary_name;
 #[path = "integration/dynamic_loadlibrary_fullpath.rs"]
 mod dynamic_loadlibrary_fullpath;
+#[path = "integration/dynamic_missing_direct.rs"]
+mod dynamic_missing_direct;

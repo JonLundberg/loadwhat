@@ -63,3 +63,5 @@ Thumbs.db
 Desktop.ini
 
 tests/fixtures/msvc/out/
+
+output.txt

@@ -284,6 +284,58 @@ fn run_command(opts: RunOptions) -> i32 {
         }
     }
 
+    // Dynamic (LoadLibrary) failures are observed via loader-snaps debug strings.
+    if opts.loader_snaps && missing_or_bad == 0 {
+        if let Some(dm) = detect_dynamic_missing_from_debug_strings(&outcome) {
+            if test_mode {
+                if dm.dll.starts_with("lwtest_") {
+                    detected_missing_name = Some(dm.dll.clone());
+                }
+            } else {
+                let app_dir = exe_path.parent().unwrap_or_else(|| Path::new("."));
+                if let Ok(context) = SearchContext::from_environment(app_dir, &cwd, env_path_override(&[])) {
+                    emit(
+                        "SEARCH_ORDER",
+                        &vec![field("safedll", if context.safedll { "1" } else { "0" })],
+                    );
+
+                    let mut fields = vec![
+                        field("dll", quote(&dm.dll)),
+                        field("reason", quote(dm.reason)),
+                    ];
+                    if let Some(st) = dm.status {
+                        fields.push(field("status", hex_u32(st)));
+                    }
+                    emit("DYNAMIC_MISSING", &fields);
+
+                    let resolution = search::resolve_dll(&dm.dll, &context);
+                    for candidate in &resolution.candidates {
+                        emit(
+                            "SEARCH_PATH",
+                            &vec![
+                                field("dll", quote(&dm.dll)),
+                                field("order", candidate.order.to_string()),
+                                field("path", quote(&display_path(&candidate.path))),
+                                field("result", quote(candidate.result)),
+                            ],
+                        );
+                    }
+                    missing_or_bad = 1;
+                } else {
+                    let mut fields = vec![
+                        field("dll", quote(&dm.dll)),
+                        field("reason", quote(dm.reason)),
+                    ];
+                    if let Some(st) = dm.status {
+                        fields.push(field("status", hex_u32(st)));
+                    }
+                    emit("DYNAMIC_MISSING", &fields);
+                    missing_or_bad = 1;
+                }
+            }
+        }
+    }
+
     if test_mode && detected_missing_name.is_none() {
         detected_missing_name = detect_missing_lwtest_dll_from_debug_strings(&outcome);
     }
@@ -722,49 +774,211 @@ fn test_mode_exit_code(outcome: &RunOutcome, load_failure_detected: bool) -> i32
 
 #[cfg(windows)]
 fn detect_missing_lwtest_dll_from_debug_strings(outcome: &RunOutcome) -> Option<String> {
+    detect_dynamic_missing_from_debug_strings(outcome).and_then(|v| {
+        if v.dll.starts_with("lwtest_") {
+            Some(v.dll)
+        } else {
+            None
+        }
+    })
+}
+
+#[cfg(windows)]
+#[derive(Debug, Clone)]
+struct DynamicMissing {
+    dll: String,
+    reason: &'static str,
+    status: Option<u32>,
+}
+
+#[cfg(windows)]
+fn detect_dynamic_missing_from_debug_strings(outcome: &RunOutcome) -> Option<DynamicMissing> {
+    let mut last_load_candidate: Option<String> = None;
+
     for event in &outcome.runtime_events {
         let RuntimeEvent::DebugString(debug) = event else {
             continue;
         };
 
-        let text = debug.text.to_ascii_lowercase();
-        let looks_like_missing =
-            text.contains("error")
-                || text.contains("not found")
-                || text.contains("unable to load")
-                || text.contains("status: 0xc0000135")
-                || text.contains("status=0xc0000135")
-                || text.contains("0x8007007e");
-        if !looks_like_missing {
+        let raw = debug.text.trim();
+        if raw.is_empty() {
             continue;
         }
 
-        if let Some(name) = extract_lwtest_dll_name(&text) {
-            return Some(name);
+        let lower = raw.to_ascii_lowercase();
+        let dlls = extract_dll_basenames(&lower);
+        if !dlls.is_empty() && looks_like_load_attempt(&lower) {
+            last_load_candidate = pick_best_dll(&dlls).or_else(|| Some(dlls[0].clone()));
+        }
+
+        if !looks_like_loader_failure(&lower) {
+            continue;
+        }
+
+        let status = extract_first_hex_u32(&lower);
+        let mut candidate = pick_best_dll(&dlls).or_else(|| last_load_candidate.clone());
+        if candidate.is_none() && !dlls.is_empty() {
+            candidate = Some(dlls[0].clone());
+        }
+        let Some(dll) = candidate else {
+            continue;
+        };
+
+        let reason = match status {
+            Some(0xC0000135) | Some(0x8007007E) => "NOT_FOUND",
+            Some(0xC000007B) | Some(0x800700C1) => "BAD_IMAGE",
+            _ => {
+                if lower.contains("not found")
+                    || lower.contains("could not be found")
+                    || lower.contains("file not found")
+                {
+                    "NOT_FOUND"
+                } else if lower.contains("bad image") || lower.contains("invalid image") {
+                    "BAD_IMAGE"
+                } else {
+                    "OTHER"
+                }
+            }
+        };
+
+        let dll = if is_noise_dll(&dll) {
+            pick_best_dll(&dlls).unwrap_or(dll)
+        } else {
+            dll
+        };
+
+        return Some(DynamicMissing {
+            dll,
+            reason,
+            status,
+        });
+    }
+
+    None
+}
+
+#[cfg(windows)]
+fn looks_like_load_attempt(text_lower: &str) -> bool {
+    text_lower.contains("ldrloaddll")
+        || text_lower.contains("ldrp")
+        || text_lower.contains("loadlibrary")
+        || text_lower.contains("loading")
+        || text_lower.contains("load ")
+}
+
+#[cfg(windows)]
+fn looks_like_loader_failure(text_lower: &str) -> bool {
+    if text_lower.contains("0xc0000135")
+        || text_lower.contains("0x8007007e")
+        || text_lower.contains("0xc000007b")
+        || text_lower.contains("0x800700c1")
+        || text_lower.contains("0xc0000139")
+        || text_lower.contains("0xc0000142")
+    {
+        return true;
+    }
+
+    let has_fail_word = text_lower.contains("failed")
+        || text_lower.contains("unable")
+        || text_lower.contains("not found")
+        || text_lower.contains("error")
+        || text_lower.contains("status:")
+        || text_lower.contains("status=");
+
+    has_fail_word && text_lower.contains(".dll")
+}
+
+#[cfg(windows)]
+fn pick_best_dll(dlls: &[String]) -> Option<String> {
+    for dll in dlls {
+        if !is_noise_dll(dll) {
+            return Some(dll.clone());
         }
     }
     None
 }
 
 #[cfg(windows)]
-fn extract_lwtest_dll_name(text: &str) -> Option<String> {
-    let mut offset = 0usize;
-    while let Some(found) = text[offset..].find("lwtest_") {
-        let start = offset + found;
-        let remaining = &text[start..];
-        let Some(dll_end_rel) = remaining.find(".dll") else {
-            offset = start + "lwtest_".len();
-            continue;
-        };
+fn is_noise_dll(dll_lower_basename: &str) -> bool {
+    let d = dll_lower_basename;
+    d.starts_with("api-ms-win-")
+        || d.starts_with("ext-ms-")
+        || matches!(
+            d,
+            "ntdll.dll"
+                | "kernel32.dll"
+                | "kernelbase.dll"
+                | "user32.dll"
+                | "gdi32.dll"
+                | "advapi32.dll"
+                | "sechost.dll"
+                | "msvcrt.dll"
+                | "ucrtbase.dll"
+        )
+}
 
-        let end = start + dll_end_rel + 4;
-        let candidate = &text[start..end];
-        if let Some(name) = normalize_dll_basename(candidate) {
-            return Some(name);
+#[cfg(windows)]
+fn extract_first_hex_u32(text_lower: &str) -> Option<u32> {
+    let bytes = text_lower.as_bytes();
+    let mut i = 0usize;
+    while i + 10 <= bytes.len() {
+        if bytes[i] == b'0' && bytes[i + 1] == b'x' {
+            let slice = &text_lower[i + 2..i + 10];
+            if slice.chars().all(|c| c.is_ascii_hexdigit()) {
+                if let Ok(v) = u32::from_str_radix(slice, 16) {
+                    return Some(v);
+                }
+            }
         }
-        offset = end;
+        i += 1;
     }
     None
+}
+
+#[cfg(windows)]
+fn extract_dll_basenames(text_lower: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut offset = 0usize;
+
+    while let Some(rel) = text_lower[offset..].find(".dll") {
+        let dll_end = offset + rel + 4;
+
+        let mut start = offset + rel;
+        while start > 0 {
+            let c = text_lower.as_bytes()[start - 1] as char;
+            let ok = c.is_ascii_alphanumeric()
+                || c == '_'
+                || c == '.'
+                || c == '-'
+                || c == '\\'
+                || c == '/'
+                || c == ':';
+            if !ok {
+                break;
+            }
+            start -= 1;
+        }
+
+        let token = text_lower[start..dll_end]
+            .trim_matches(|c: char| c == '"' || c == '\'' || c.is_whitespace());
+
+        let basename = token
+            .rsplit(['\\', '/'])
+            .next()
+            .unwrap_or(token)
+            .trim_matches(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-'))
+            .to_string();
+
+        if !basename.is_empty() && basename.ends_with(".dll") {
+            if !out.iter().any(|v| v == &basename) {
+                out.push(basename);
+            }
+        }
+
+        offset = dll_end;
+    }
+
+    out
 }
 
 #[cfg(windows)]
@@ -807,5 +1021,80 @@ fn display_path(path: &Path) -> String {
         rest.to_string()
     } else {
         raw
+    }
+}
+
+#[cfg(all(test, windows))]
+mod dynamic_missing_tests {
+    use super::*;
+    use debug_run::DebugStringEvent;
+
+    fn outcome_with_debug_lines(lines: &[&str]) -> RunOutcome {
+        let events = lines
+            .iter()
+            .map(|line| {
+                RuntimeEvent::DebugString(DebugStringEvent {
+                    pid: 1,
+                    tid: 1,
+                    text: (*line).to_string(),
+                })
+            })
+            .collect();
+        RunOutcome {
+            pid: 1,
+            runtime_events: events,
+            loaded_modules: Vec::new(),
+            end_kind: RunEndKind::ExitProcess,
+            exit_code: Some(0),
+            exception_code: None,
+            elapsed_ms: 1,
+        }
+    }
+
+    #[test]
+    fn detects_dynamic_missing_on_single_failure_line() {
+        let outcome = outcome_with_debug_lines(&[
+            r#"LdrLoadDll failed for C:\App\foo.dll Status: 0xC0000135"#,
+        ]);
+        let detected = detect_dynamic_missing_from_debug_strings(&outcome).expect("expected dynamic missing");
+        assert_eq!(detected.dll, "foo.dll");
+        assert_eq!(detected.reason, "NOT_FOUND");
+        assert_eq!(detected.status, Some(0xC0000135));
+    }
+
+    #[test]
+    fn uses_last_load_attempt_when_failure_line_has_no_dll() {
+        let outcome = outcome_with_debug_lines(&[
+            r#"LdrLoadDll loading C:\App\bar.dll"#,
+            r#"LdrpSomething failed Status: 0xC0000135"#,
+        ]);
+        let detected = detect_dynamic_missing_from_debug_strings(&outcome).expect("expected dynamic missing");
+        assert_eq!(detected.dll, "bar.dll");
+        assert_eq!(detected.reason, "NOT_FOUND");
+    }
+
+    #[test]
+    fn prefers_non_noise_dll() {
+        let outcome = outcome_with_debug_lines(&[
+            r#"ERROR: api-ms-win-core-file-l1-2-0.dll while loading mydep.dll status: 0xC0000135"#,
+        ]);
+        let detected = detect_dynamic_missing_from_debug_strings(&outcome).expect("expected dynamic missing");
+        assert_eq!(detected.dll, "mydep.dll");
+    }
+
+    #[test]
+    fn lwtest_wrapper_filters_non_fixture_dlls() {
+        let outcome = outcome_with_debug_lines(&[
+            r#"LdrLoadDll failed for C:\App\foo.dll Status: 0xC0000135"#,
+        ]);
+        assert_eq!(detect_missing_lwtest_dll_from_debug_strings(&outcome), None);
+
+        let outcome = outcome_with_debug_lines(&[
+            r#"LdrLoadDll failed for C:\App\lwtest_b.dll Status: 0xC0000135"#,
+        ]);
+        assert_eq!(
+            detect_missing_lwtest_dll_from_debug_strings(&outcome),
+            Some("lwtest_b.dll".to_string())
+        );
     }
 }
