@@ -1,16 +1,11 @@
 # loadwhat
 
-`loadwhat` is a Windows x64 Rust CLI for diagnosing DLL loading failures in no-GUI environments.
-
-It is designed to stay lightweight:
-- single executable
-- no external Rust crate dependencies
-- direct Win32 API calls for debugger events
+`loadwhat` is a Windows x64 Rust CLI for diagnosing DLL loading failures using Win32 debug APIs directly.
 
 ## Current commands
 
 ```text
-loadwhat run <exe_path> [--cwd <dir>] [--timeout-ms <n>] [-- <args...>]
+loadwhat run <exe_path> [--cwd <dir>] [--timeout-ms <n>] [--loader-snaps] [-v|--verbose] [-- <args...>]
 loadwhat imports <exe_or_dll> [--cwd <dir>]
 ```
 
@@ -27,21 +22,18 @@ Release output:
 target\release\loadwhat.exe
 ```
 
-## Examples
+## Output modes
 
-Run a process under a minimal debug loop:
+- Default mode is failures-only:
+  - success: no output lines
+  - diagnosed load issue: emits only relevant diagnosis/search tokens
+- Verbose mode (`-v`, `--verbose`) includes runtime timeline tokens:
+  - `RUN_START`, `RUNTIME_LOADED`, `DEBUG_STRING`, `RUN_END`
+  - plus static/search/summary tokens
 
-```powershell
-.\target\release\loadwhat.exe run C:\Windows\System32\notepad.exe
-```
+With `--loader-snaps`, `loadwhat` can infer handled dynamic `LoadLibrary*` failures and emit `DYNAMIC_MISSING` with search candidates.
 
-Scan direct static imports and print ordered search candidates:
-
-```powershell
-.\target\release\loadwhat.exe imports C:\Windows\System32\notepad.exe
-```
-
-## Output style
+## Token style
 
 Output is line-oriented and greppable:
 
@@ -49,32 +41,36 @@ Output is line-oriented and greppable:
 TOKEN key=value key=value ...
 ```
 
-Typical tokens include:
-- `RUN_START`
-- `RUNTIME_LOADED`
-- `RUN_END`
-- `STATIC_START`
-- `STATIC_IMPORT`
-- `STATIC_FOUND`
-- `STATIC_MISSING`
-- `STATIC_BAD_IMAGE`
-- `SEARCH_ORDER`
-- `SEARCH_PATH`
-- `FIRST_BREAK`
-- `SUMMARY`
+Common token families:
 
-## Open source workflow
+- `RUN_START`, `RUNTIME_LOADED`, `DEBUG_STRING`, `RUN_END`
+- `STATIC_*` (`STATIC_IMPORT`, `STATIC_MISSING`, `STATIC_BAD_IMAGE`, ...)
+- `SEARCH_ORDER`, `SEARCH_PATH`
+- `FIRST_BREAK`, `SUMMARY`, `NOTE`
+- `DYNAMIC_MISSING` (loader-snaps dynamic inference)
 
-This repo includes:
-- MIT license
-- contribution guide
-- GitHub Actions workflow for Windows build/test
+## Examples
 
-## Project status
+Run with default failures-only output:
 
-The current implementation focuses on:
-- direct import diagnostics
-- stable CLI output
-- reliable baseline behavior without GUI dependencies
+```powershell
+.\target\release\loadwhat.exe run C:\Windows\System32\notepad.exe
+```
 
-Follow-up milestones are tracked in `docs/loadwhat_spec_v1.md`.
+Run with loader-snaps and verbose runtime output:
+
+```powershell
+.\target\release\loadwhat.exe run C:\Windows\System32\notepad.exe --loader-snaps -v
+```
+
+Scan direct imports offline:
+
+```powershell
+.\target\release\loadwhat.exe imports C:\Windows\System32\notepad.exe
+```
+
+## Docs
+
+- Authoritative behavior spec: `docs/loadwhat_spec_v1.md`
+- Contribution/testing workflow: `CONTRIBUTING.md`, `docs/testing.md`
+- Out-of-scope and planned features: `docs/roadmap.md`
