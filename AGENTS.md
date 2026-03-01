@@ -30,7 +30,8 @@ Do not implement roadmap items unless explicitly requested.
 - Use Win32 Debug APIs directly:
   - `CreateProcessW` with `DEBUG_ONLY_THIS_PROCESS`
   - `WaitForDebugEvent` / `ContinueDebugEvent`
-- Do not add removed features (attach/recursive/json/custom search modes).
+- Do not add removed features (attach/json/custom search modes).
+- Recursive missing-dependency walk is part of v1 spec; implement deterministically per spec.
 - Output must be line-oriented tokens per spec (`TOKEN key=value ...`).
 
 ## Truthfulness requirements
@@ -62,6 +63,11 @@ Do not rely on:
 - thread scheduling
 
 Use explicit sorting where required by spec.
+
+## File hygiene requirements
+
+- Preserve existing file line-ending style; do not introduce mixed line endings.
+- For markdown and docs in this repository, keep LF line endings to avoid noisy diffs.
 
 ## Error handling contract
 
@@ -96,6 +102,7 @@ Do not mix unrelated feature work in one change.
 ### Milestone 3 - static diagnosis + imports
 
 - direct import parsing
+- recursive missing-dependency walk
 - fixed v1 search order resolution
 - emit `STATIC_*`, `SEARCH_ORDER`, `SEARCH_PATH`, `SUMMARY` deterministically
 

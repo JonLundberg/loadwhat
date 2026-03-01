@@ -11,11 +11,14 @@ Authoritative current behavior is defined by `docs/loadwhat_spec_v1.md`.
 - environment injection option (`--env KEY=VALUE`)
 - stricter/warning policy mode (`--strict`)
 - quiet output mode (`--quiet`)
+- WOW64 target support (32-bit process on 64-bit Windows):
+  - parse x86 PE imports and resolve with the same v1 search order
+  - support loader-snaps enable via PEB32 and/or correct IFEO handling
+  - use `NtQueryInformationProcess(ProcessWow64Information)` and `PEB32->NtGlobalFlag` offset `0x68`
 
 ## Explicitly removed / out of scope
 
 - attach to existing process
-- recursive import scanning
 - JSON output mode
 - custom search path knobs or custom search modes
 

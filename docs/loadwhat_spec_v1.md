@@ -52,12 +52,50 @@ Static diagnosis is attempted only when startup appears to have failed early, ba
 
 Behavior:
 
-- Parse direct imports of the target image (no recursive import walk).
+- Parse direct imports of the target image. Additionally, perform an always-on recursive missing-dependency walk over the import graph of any found modules (see "Recursive missing-dependency walk (v1)" below).
 - Compare imports with modules observed in Phase A.
 - Resolve missing candidates with the fixed v1 search order.
 - If static missing or bad image is diagnosed:
   - default mode: emit `SEARCH_ORDER`, one `STATIC_MISSING` or `STATIC_BAD_IMAGE`, and `SEARCH_PATH` for that DLL.
   - verbose mode: emit full `STATIC_*` and `SEARCH_*` events and `FIRST_BREAK`.
+
+#### Recursive missing-dependency walk (v1)
+
+Purpose:
+
+- Detect missing transitive dependencies without relying on loader-snaps.
+
+Rules:
+
+- Always on during `run` Phase B and in `imports`.
+- Uses the same fixed v1 search order and SafeDllSearchMode behavior (§4).
+- Missing-focused: failures-only mode may stop as soon as the tool can report the first missing DLL.
+
+Algorithm (deterministic BFS):
+
+1. Start at root image (EXE for `run`, file for `imports`), `depth=0`.
+2. Parse direct import table.
+3. For each imported DLL name:
+   - Ignore API sets: `api-ms-win-*`, `ext-ms-win-*`.
+   - Resolve via §4 search order.
+   - If not found: record missing `{ dll, depth=parent+1, via=parent module }`.
+   - If found: enqueue resolved module for scanning at `depth=parent+1`.
+4. Maintain `visited` set keyed by normalized absolute path.
+5. Stop conditions:
+   - failures-only: stop once first missing is known.
+   - verbose: continue walking until queue is empty.
+
+First-missing selection:
+
+- Lowest `depth`, tie-break by:
+  1. `via` lexicographic
+  2. `dll` lexicographic
+
+Output contract change:
+
+- Keep existing token families.
+- For transitive missing, allow optional fields on `STATIC_MISSING`:
+  - `via="parent.dll"` and `depth=<n>`.
 
 ### Phase C: dynamic missing inference (`--loader-snaps`)
 
@@ -87,6 +125,22 @@ When `--loader-snaps` is present:
    and restore original value afterward.
 
 Restoration is best effort for all terminal paths.
+
+### Determining `PEB->NtGlobalFlag` address (v1)
+
+- Detect Windows `major.minor.build` using `RtlGetVersion` (not `GetVersionEx`).
+- v1 is x64-only:
+  - If the target is WOW64, treat as unsupported (exit code `22`) and emit a `NOTE` that WOW64 target support is roadmap-only.
+- For x64 target:
+  - Read `PebBaseAddress` from `NtQueryInformationProcess(ProcessBasicInformation)`.
+  - Select `NtGlobalFlagOffset` using detected OS version where possible.
+  - Best-effort rule: if OS detection fails or is unknown, still attempt using the default x64 offset.
+- Offset statement for x64 v1:
+  - `NtGlobalFlagOffset = 0xBC` for Windows 10/11 family (`major >= 10`).
+  - If OS version is unknown, still attempt `0xBC`.
+- Attempt PEB write first; if it fails, fall back to IFEO as specified above.
+- Recommended verbose note example:
+  - `NOTE topic="loader-snaps" detail="peb-ntglobalflag" os="major.minor.build|unknown" ntglobalflag_offset=0xBC`
 
 Failure behavior:
 
@@ -175,7 +229,7 @@ Required token families in v1:
 
 ## 6) `imports` behavior
 
-`imports` runs direct import scanning for `<exe_or_dll>` and resolves imports with the same fixed search order and SafeDllSearchMode behavior, emitting static/search tokens.
+`imports` runs direct import scanning for `<exe_or_dll>` and also performs the recursive missing-dependency walk described in §2, resolving imports with the same fixed search order and SafeDllSearchMode behavior and emitting static/search tokens.
 
 ## 7) Exit codes
 

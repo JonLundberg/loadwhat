@@ -41,6 +41,7 @@ These are roadmap items, not current implementation requirements:
 - attach-to-process workflows
 - JSON output
 - COM helper subcommands
-- custom search modes and recursive import analysis
+- custom search modes
+- WOW64 target support (32-bit target process handling)
 
 See `docs/roadmap.md` for planned/out-of-scope items.

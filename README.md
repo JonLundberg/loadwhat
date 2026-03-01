@@ -31,7 +31,10 @@ target\release\loadwhat.exe
   - `RUN_START`, `RUNTIME_LOADED`, `DEBUG_STRING`, `RUN_END`
   - plus static/search/summary tokens
 
+`run` Phase B performs direct import diagnosis and an always-on recursive missing-dependency walk (transitive missing detection).
+
 With `--loader-snaps`, `loadwhat` can infer handled dynamic `LoadLibrary*` failures and emit `DYNAMIC_MISSING` with search candidates.
+Loader-snaps setup uses best-effort `PEB->NtGlobalFlag` enable with Windows version/build detection to pick the x64 offset.
 
 ## Token style
 
@@ -49,6 +52,12 @@ Common token families:
 - `FIRST_BREAK`, `SUMMARY`, `NOTE`
 - `DYNAMIC_MISSING` (loader-snaps dynamic inference)
 
+Transitive missing reports may include optional fields on `STATIC_MISSING`, for example:
+
+```text
+STATIC_MISSING dll="lwtest_b.dll" via="lwtest_a.dll" depth=2
+```
+
 ## Examples
 
 Run with default failures-only output:
@@ -63,7 +72,7 @@ Run with loader-snaps and verbose runtime output:
 .\target\release\loadwhat.exe run C:\Windows\System32\notepad.exe --loader-snaps -v
 ```
 
-Scan direct imports offline:
+Scan imports offline (including recursive missing-dependency walk):
 
 ```powershell
 .\target\release\loadwhat.exe imports C:\Windows\System32\notepad.exe
