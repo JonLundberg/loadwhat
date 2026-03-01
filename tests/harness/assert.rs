@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use super::run_loadwhat::RunResult;
+use super::win_path::normalize_for_compare;
 
 pub fn assert_not_timed_out(result: &RunResult) {
     assert!(
@@ -74,7 +75,11 @@ pub fn assert_target_exit_code(stdout: &str, expected: i32) {
 
 pub fn assert_loaded_path(stdout: &str, dll_name: &str, expected_path: &Path) {
     let expected_name = dll_name.to_ascii_lowercase();
-    let expected_path = normalize_path_value(&expected_path.display().to_string());
+    let expected_path_raw = expected_path.display().to_string();
+    let expected_path_norm = normalize_for_compare(&expected_path_raw);
+    let expected_raw_line = format!("LWTEST:LOAD name={} path={}", expected_name, expected_path_raw);
+    let mut mismatch_detail = None::<(String, String, String)>;
+
     let found = lwtest_lines(stdout).iter().any(|line| {
         if !line.starts_with("LWTEST:LOAD ") {
             return false;
@@ -83,18 +88,49 @@ pub fn assert_loaded_path(stdout: &str, dll_name: &str, expected_path: &Path) {
         if !field_eq(&fields, "name", &expected_name) {
             return false;
         }
-        fields
-            .get("path")
-            .map(|v| normalize_path_value(v) == expected_path)
-            .unwrap_or(false)
+
+        let Some(actual_path_raw) = fields.get("path").cloned() else {
+            // Preserve old behavior for malformed lines instead of masking format regressions.
+            return line.eq_ignore_ascii_case(&expected_raw_line);
+        };
+        let actual_path_norm = normalize_for_compare(&actual_path_raw);
+        if actual_path_norm == expected_path_norm {
+            return true;
+        }
+
+        mismatch_detail = Some((line.clone(), actual_path_raw, actual_path_norm));
+        false
     });
 
-    assert!(
-        found,
+    if found {
+        return;
+    }
+
+    if let Some((actual_line_raw, actual_path_raw, actual_path_norm)) = mismatch_detail {
+        panic!(
+            concat!(
+                "expected LWTEST:LOAD path mismatch for name={name}.\n",
+                "raw expected line: LWTEST:LOAD name={name} path={expected_raw}\n",
+                "raw actual line: {actual_line}\n",
+                "raw expected path: {expected_raw}\n",
+                "raw actual path: {actual_raw}\n",
+                "normalized expected path: {expected_norm}\n",
+                "normalized actual path: {actual_norm}\n",
+                "stdout:\n{stdout}"
+            ),
+            name = dll_name,
+            expected_raw = expected_path_raw,
+            actual_line = actual_line_raw,
+            actual_raw = actual_path_raw,
+            expected_norm = expected_path_norm,
+            actual_norm = actual_path_norm,
+            stdout = stdout
+        );
+    }
+
+    panic!(
         "expected LWTEST:LOAD name={} path={}.\nstdout:\n{}",
-        dll_name,
-        expected_path,
-        stdout
+        dll_name, expected_path_raw, stdout
     );
 }
 
@@ -119,17 +155,12 @@ fn parse_fields(line: &str) -> HashMap<String, String> {
 }
 
 fn normalize_value(value: &str) -> String {
-    value.trim_matches('"').to_ascii_lowercase()
-}
-
-fn normalize_path_value(value: &str) -> String {
-    normalize_value(value).replace('/', "\\")
+    value.trim_matches('"').to_string()
 }
 
 fn field_eq(fields: &HashMap<String, String>, key: &str, expected: &str) -> bool {
     fields
         .get(key)
-        .map(|v| v == &expected.to_ascii_lowercase())
+        .map(|v| v.eq_ignore_ascii_case(expected))
         .unwrap_or(false)
 }
-

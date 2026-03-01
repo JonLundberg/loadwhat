@@ -133,6 +133,12 @@ mod tests {
     }
 
     #[test]
+    fn strips_nt_prefix_variant() {
+        let got = normalize_for_compare(r"\??\C:\Foo\Bar");
+        assert_eq!(got, r"c:\foo\bar");
+    }
+
+    #[test]
     fn compares_case_insensitive_paths() {
         let a = normalize_for_compare(r"c:\Foo\BAR");
         let b = normalize_for_compare(r"C:\foo\bar");
