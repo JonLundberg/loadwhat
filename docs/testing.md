@@ -48,3 +48,5 @@ When `LOADWHAT_TEST_MODE=1`, the binary may emit internal lines:
 These lines are for harness assertions and are not part of the public token contract in `docs/loadwhat_spec_v1.md`.
 
 Some integration tests may assert optional fields like `via`/`depth` on `STATIC_MISSING` for transitive missing dependencies, and may assert `NOTE` lines related to loader-snaps setup details.
+
+`run` defaults to one-line summary output. Tests that assert detailed trace lines (`SEARCH_ORDER`, `SEARCH_PATH`, runtime timeline tokens, or loader-snaps notes) must pass `--trace` (or `-v`, which implies trace).

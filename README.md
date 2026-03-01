@@ -5,7 +5,7 @@
 ## Current commands
 
 ```text
-loadwhat run <exe_path> [--cwd <dir>] [--timeout-ms <n>] [--loader-snaps] [-v|--verbose] [-- <args...>]
+loadwhat run <exe_path> [--cwd <dir>] [--timeout-ms <n>] [--loader-snaps] [--trace|--summary] [-v|--verbose] [-- <args...>]
 loadwhat imports <exe_or_dll> [--cwd <dir>]
 ```
 
@@ -24,12 +24,13 @@ target\release\loadwhat.exe
 
 ## Output modes
 
-- Default mode is failures-only:
-  - success: no output lines
-  - diagnosed load issue: emits only relevant diagnosis/search tokens
-- Verbose mode (`-v`, `--verbose`) includes runtime timeline tokens:
+- Default `run` mode is summary:
+  - emits exactly one line for first-break diagnosis (`STATIC_MISSING`, `STATIC_BAD_IMAGE`, or `DYNAMIC_MISSING`)
+  - emits `SUCCESS status=0` when startup succeeds without a diagnosed load issue
+- `--trace` enables detailed diagnostic trace output (`SEARCH_ORDER`, `SEARCH_PATH`, and related diagnosis lines).
+- `-v`/`--verbose` implies `--trace` and adds runtime timeline tokens:
   - `RUN_START`, `RUNTIME_LOADED`, `DEBUG_STRING`, `RUN_END`
-  - plus static/search/summary tokens
+  - plus full static/search/summary tokens
 
 `run` Phase B performs direct import diagnosis and an always-on recursive missing-dependency walk (transitive missing detection).
 
@@ -60,13 +61,21 @@ STATIC_MISSING dll="lwtest_b.dll" via="lwtest_a.dll" depth=2
 
 ## Examples
 
-Run with default failures-only output:
+Run with default summary output:
 
 ```powershell
-.\target\release\loadwhat.exe run C:\Windows\System32\notepad.exe
+.\target\release\loadwhat.exe run C:\path\to\myapp.exe
+# example output:
+# DYNAMIC_MISSING dll="b.dll" reason="NOT_FOUND"
 ```
 
-Run with loader-snaps and verbose runtime output:
+Run with full trace output:
+
+```powershell
+.\target\release\loadwhat.exe run C:\path\to\myapp.exe --trace
+```
+
+Run with loader-snaps and verbose trace output:
 
 ```powershell
 .\target\release\loadwhat.exe run C:\Windows\System32\notepad.exe --loader-snaps -v

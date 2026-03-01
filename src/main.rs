@@ -68,6 +68,8 @@ fn main() {
 #[cfg(windows)]
 fn run_command(opts: RunOptions) -> i32 {
     let test_mode = test_mode_enabled();
+    let trace_mode = opts.trace;
+    let summary_mode = !trace_mode;
 
     let exe_path = match normalize_existing_run_target(&opts.exe_path) {
         Ok(p) => p,
@@ -91,19 +93,21 @@ fn run_command(opts: RunOptions) -> i32 {
                 let guard = match LoaderSnapsGuard::enable_for_image(&image_name) {
                     Ok(guard) => guard,
                     Err(code) => {
-                        emit(
-                            "NOTE",
-                            &vec![
-                                field("topic", quote("loader-snaps")),
-                                field("detail", quote("enable-failed")),
-                                field("code", hex_u32(code)),
-                            ],
-                        );
+                        if trace_mode {
+                            emit(
+                                "NOTE",
+                                &vec![
+                                    field("topic", quote("loader-snaps")),
+                                    field("detail", quote("enable-failed")),
+                                    field("code", hex_u32(code)),
+                                ],
+                            );
+                        }
                         return if test_mode { 10 } else { 21 };
                     }
                 };
 
-                if opts.verbose {
+                if trace_mode && opts.verbose {
                     emit_loader_snaps_peb_note(peb_info);
                     emit(
                         "NOTE",
@@ -127,17 +131,19 @@ fn run_command(opts: RunOptions) -> i32 {
                 )
             }
             Err(RunError::UnsupportedWow64Target) => {
-                emit(
-                    "NOTE",
-                    &vec![
-                        field("topic", quote("loader-snaps")),
-                        field("detail", quote("wow64-target-unsupported")),
-                        field(
-                            "message",
-                            quote("WOW64 target support is roadmap-only in v1"),
-                        ),
-                    ],
-                );
+                if trace_mode {
+                    emit(
+                        "NOTE",
+                        &vec![
+                            field("topic", quote("loader-snaps")),
+                            field("detail", quote("wow64-target-unsupported")),
+                            field(
+                                "message",
+                                quote("WOW64 target support is roadmap-only in v1"),
+                            ),
+                        ],
+                    );
+                }
                 return 22;
             }
             Err(err) => (Err(err), None),
@@ -157,14 +163,16 @@ fn run_command(opts: RunOptions) -> i32 {
 
     if let Some(mut guard) = snaps_guard.take() {
         if let Err(code) = guard.restore() {
-            emit(
-                "NOTE",
-                &vec![
-                    field("topic", quote("loader-snaps")),
-                    field("detail", quote("restore-failed")),
-                    field("code", hex_u32(code)),
-                ],
-            );
+            if trace_mode {
+                emit(
+                    "NOTE",
+                    &vec![
+                        field("topic", quote("loader-snaps")),
+                        field("detail", quote("restore-failed")),
+                        field("code", hex_u32(code)),
+                    ],
+                );
+            }
         }
     }
 
@@ -179,28 +187,30 @@ fn run_command(opts: RunOptions) -> i32 {
             return if test_mode { 10 } else { 21 };
         }
         Err(RunError::UnsupportedWow64Target) => {
-            emit(
-                "NOTE",
-                &vec![
-                    field("topic", quote("loader-snaps")),
-                    field("detail", quote("wow64-target-unsupported")),
-                    field(
-                        "message",
-                        quote("WOW64 target support is roadmap-only in v1"),
-                    ),
-                ],
-            );
+            if trace_mode {
+                emit(
+                    "NOTE",
+                    &vec![
+                        field("topic", quote("loader-snaps")),
+                        field("detail", quote("wow64-target-unsupported")),
+                        field(
+                            "message",
+                            quote("WOW64 target support is roadmap-only in v1"),
+                        ),
+                    ],
+                );
+            }
             return 22;
         }
     };
 
-    if opts.verbose && opts.loader_snaps {
+    if trace_mode && opts.verbose && opts.loader_snaps {
         if let Some(info) = outcome.loader_snaps_peb {
             emit_loader_snaps_peb_note(info);
         }
     }
 
-    if opts.verbose {
+    if trace_mode && opts.verbose {
         emit_run_events(&exe_path, &cwd, &outcome);
     }
 
@@ -214,6 +224,7 @@ fn run_command(opts: RunOptions) -> i32 {
     let mut missing_or_bad = 0usize;
     let mut detected_missing_name: Option<String> = None;
     let mut dynamic_failure_seen = false;
+    let mut summary_line_emitted = false;
     let loader_exception = outcome
         .exception_code
         .filter(|code| is_loader_related_code(*code));
@@ -228,7 +239,9 @@ fn run_command(opts: RunOptions) -> i32 {
         } else {
             "MEDIUM"
         };
-        let mode = if opts.verbose {
+        let mode = if summary_mode {
+            StaticEmitMode::SummaryOnly
+        } else if opts.verbose {
             StaticEmitMode::Full
         } else {
             StaticEmitMode::FailuresOnly
@@ -244,7 +257,35 @@ fn run_command(opts: RunOptions) -> i32 {
                         detected_missing_name = normalize_dll_basename(&issue.dll)
                             .or_else(|| Some(issue.dll.to_ascii_lowercase()));
                     }
-                    if opts.verbose {
+                    if summary_mode {
+                        match issue.kind {
+                            ResolutionKind::Missing => {
+                                let mut fields = vec![
+                                    field("module", quote(&issue.module)),
+                                    field("dll", quote(&issue.dll)),
+                                    field("reason", quote("NOT_FOUND")),
+                                ];
+                                if issue.depth > 1 {
+                                    fields.push(field("via", quote(&issue.via)));
+                                    fields.push(field("depth", issue.depth.to_string()));
+                                }
+                                emit("STATIC_MISSING", &fields);
+                                summary_line_emitted = true;
+                            }
+                            ResolutionKind::BadImage => {
+                                emit(
+                                    "STATIC_BAD_IMAGE",
+                                    &vec![
+                                        field("module", quote(&issue.module)),
+                                        field("dll", quote(&issue.dll)),
+                                        field("reason", quote("BAD_IMAGE")),
+                                    ],
+                                );
+                                summary_line_emitted = true;
+                            }
+                            ResolutionKind::Found => {}
+                        }
+                    } else if opts.verbose {
                         emit(
                             "FIRST_BREAK",
                             &vec![
@@ -313,7 +354,7 @@ fn run_command(opts: RunOptions) -> i32 {
                 }
             }
             Err(err) => {
-                if opts.verbose {
+                if trace_mode && opts.verbose {
                     emit(
                         "NOTE",
                         &vec![field(
@@ -336,6 +377,17 @@ fn run_command(opts: RunOptions) -> i32 {
                 if dm.dll.starts_with("lwtest_") {
                     detected_missing_name = Some(dm.dll.clone());
                 }
+            } else if summary_mode {
+                let mut fields = vec![
+                    field("dll", quote(&dm.dll)),
+                    field("reason", quote(dm.reason)),
+                ];
+                if let Some(st) = dm.status {
+                    fields.push(field("status", hex_u32(st)));
+                }
+                emit("DYNAMIC_MISSING", &fields);
+                missing_or_bad = 1;
+                summary_line_emitted = true;
             } else {
                 let app_dir = exe_path.parent().unwrap_or_else(|| Path::new("."));
                 if let Ok(context) =
@@ -400,7 +452,7 @@ fn run_command(opts: RunOptions) -> i32 {
         return test_mode_exit_code(&outcome, load_failure_detected);
     }
 
-    if opts.verbose {
+    if trace_mode && opts.verbose {
         emit(
             "SUMMARY",
             &vec![
@@ -412,7 +464,7 @@ fn run_command(opts: RunOptions) -> i32 {
         );
     }
 
-    if missing_or_bad > 0 {
+    let code = if missing_or_bad > 0 {
         10
     } else {
         match outcome.end_kind {
@@ -420,7 +472,13 @@ fn run_command(opts: RunOptions) -> i32 {
             RunEndKind::Timeout if !outcome.loaded_modules.is_empty() => 0,
             RunEndKind::ExitProcess | RunEndKind::Exception | RunEndKind::Timeout => 21,
         }
+    };
+
+    if summary_mode && !summary_line_emitted && code == 0 {
+        emit("SUCCESS", &vec![field("status", "0")]);
     }
+
+    code
 }
 
 #[cfg(windows)]
@@ -577,6 +635,7 @@ struct StaticReport {
 enum StaticEmitMode {
     Full,
     FailuresOnly,
+    SummaryOnly,
 }
 
 #[cfg(windows)]
@@ -631,7 +690,10 @@ fn diagnose_static_imports(
     });
 
     while let Some(node) = queue.pop_front() {
-        if matches!(emit_mode, StaticEmitMode::FailuresOnly) {
+        if matches!(
+            emit_mode,
+            StaticEmitMode::FailuresOnly | StaticEmitMode::SummaryOnly
+        ) {
             if let Some(limit) = max_parent_depth_for_failures {
                 if node.depth > limit {
                     break;
@@ -743,7 +805,10 @@ fn diagnose_static_imports(
                         emit("STATIC_MISSING", &fields);
                     }
 
-                    if matches!(emit_mode, StaticEmitMode::FailuresOnly) {
+                    if matches!(
+                        emit_mode,
+                        StaticEmitMode::FailuresOnly | StaticEmitMode::SummaryOnly
+                    ) {
                         max_parent_depth_for_failures.get_or_insert(node.depth);
                     }
                 }
@@ -771,7 +836,10 @@ fn diagnose_static_imports(
                         );
                     }
 
-                    if matches!(emit_mode, StaticEmitMode::FailuresOnly) {
+                    if matches!(
+                        emit_mode,
+                        StaticEmitMode::FailuresOnly | StaticEmitMode::SummaryOnly
+                    ) {
                         max_parent_depth_for_failures.get_or_insert(node.depth);
                     }
                 }

@@ -21,12 +21,34 @@ pub fn run(
     args: &[OsString],
     timeout: Duration,
 ) -> Result<RunResult, String> {
+    run_with_test_mode(paths, current_dir, args, timeout, true)
+}
+
+pub fn run_public(
+    paths: &HarnessPaths,
+    current_dir: &Path,
+    args: &[OsString],
+    timeout: Duration,
+) -> Result<RunResult, String> {
+    run_with_test_mode(paths, current_dir, args, timeout, false)
+}
+
+fn run_with_test_mode(
+    paths: &HarnessPaths,
+    current_dir: &Path,
+    args: &[OsString],
+    timeout: Duration,
+    enable_test_mode: bool,
+) -> Result<RunResult, String> {
     let mut command = Command::new(&paths.loadwhat_bin);
     command
         .current_dir(current_dir)
         .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    if !enable_test_mode {
+        command.env_remove("LOADWHAT_TEST_MODE");
+    }
 
     let mut child = command
         .spawn()

@@ -15,7 +15,7 @@ This document is the source of truth for current implemented behavior.
 ### Primary workflow
 
 ```text
-loadwhat run <exe_path> [--cwd <dir>] [--timeout-ms <n>] [--loader-snaps] [-v|--verbose] [-- <args...>]
+loadwhat run <exe_path> [--cwd <dir>] [--timeout-ms <n>] [--loader-snaps] [--trace|--summary] [-v|--verbose] [-- <args...>]
 ```
 
 ### Helpers
@@ -32,9 +32,13 @@ Roadmap-only features are documented in `docs/roadmap.md` and are not part of th
 
 ### Output mode policy
 
-- Default mode is failures-only.
-- If startup succeeds and no load issue is diagnosed, emit no token lines.
-- `-v` or `--verbose` enables runtime event output (`RUN_START`, `RUNTIME_LOADED`, `DEBUG_STRING`, `RUN_END`) and full static diagnosis output (`STATIC_*`, `SEARCH_*`, `FIRST_BREAK`, `SUMMARY`).
+- Default mode is summary mode.
+- Summary mode emits exactly one token line for `run`:
+  - `STATIC_MISSING ...`, `STATIC_BAD_IMAGE ...`, or `DYNAMIC_MISSING ...` when a first break is diagnosed
+  - `SUCCESS status=0` when startup succeeds and no load issue is diagnosed
+- Summary mode suppresses trace-style token lines (`SEARCH_ORDER`, `SEARCH_PATH`, `NOTE`, runtime timeline tokens).
+- `--trace` enables detailed diagnostic trace output.
+- `-v` or `--verbose` implies `--trace` and additionally emits runtime event output (`RUN_START`, `RUNTIME_LOADED`, `DEBUG_STRING`, `RUN_END`) and extended static diagnosis output (`STATIC_*`, `SEARCH_*`, `FIRST_BREAK`, `SUMMARY`).
 
 ### Phase A: runtime observation
 
@@ -56,8 +60,9 @@ Behavior:
 - Compare imports with modules observed in Phase A.
 - Resolve missing candidates with the fixed v1 search order.
 - If static missing or bad image is diagnosed:
-  - default mode: emit `SEARCH_ORDER`, one `STATIC_MISSING` or `STATIC_BAD_IMAGE`, and `SEARCH_PATH` for that DLL.
-  - verbose mode: emit full `STATIC_*` and `SEARCH_*` events and `FIRST_BREAK`.
+  - summary mode: emit exactly one line, `STATIC_MISSING` or `STATIC_BAD_IMAGE`.
+  - trace mode: emit `SEARCH_ORDER`, one `STATIC_MISSING` or `STATIC_BAD_IMAGE`, and `SEARCH_PATH` for that DLL.
+  - verbose trace mode: emit full `STATIC_*` and `SEARCH_*` events and `FIRST_BREAK`.
 
 #### Recursive missing-dependency walk (v1)
 
@@ -101,11 +106,13 @@ Output contract change:
 
 When `--loader-snaps` is enabled and static diagnosis did not already report a missing/bad direct import, `loadwhat` may infer a dynamic `LoadLibrary*` failure from loader-snaps debug strings.
 
-When inference succeeds, emit:
+When inference succeeds:
 
-1. `SEARCH_ORDER safedll=...` (if search context is available)
-2. `DYNAMIC_MISSING dll="name.dll" reason="NOT_FOUND|BAD_IMAGE|OTHER" [status=0x........]`
-3. `SEARCH_PATH` lines for that DLL in evaluated order (if search context is available)
+- summary mode: emit only `DYNAMIC_MISSING dll="name.dll" reason="NOT_FOUND|BAD_IMAGE|OTHER" [status=0x........]`
+- trace mode:
+  1. `SEARCH_ORDER safedll=...` (if search context is available)
+  2. `DYNAMIC_MISSING dll="name.dll" reason="NOT_FOUND|BAD_IMAGE|OTHER" [status=0x........]`
+  3. `SEARCH_PATH` lines for that DLL in evaluated order (if search context is available)
 
 `DYNAMIC_MISSING` fields:
 
@@ -221,6 +228,7 @@ Rules:
 
 Required token families in v1:
 
+- Summary/default: `STATIC_MISSING`, `STATIC_BAD_IMAGE`, `DYNAMIC_MISSING`, `SUCCESS`
 - Runtime/verbose: `RUN_START`, `RUNTIME_LOADED`, `DEBUG_STRING`, `RUN_END`
 - Static diagnosis: `FIRST_BREAK`, `STATIC_START`, `STATIC_IMPORT`, `STATIC_FOUND`, `STATIC_MISSING`, `STATIC_BAD_IMAGE`, `STATIC_END`
 - Search: `SEARCH_ORDER`, `SEARCH_PATH`

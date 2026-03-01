@@ -67,4 +67,4 @@ For DLL-load diagnosis issues, include:
 - target executable path
 - complete `loadwhat` output
 - Windows version/build and architecture
-- if relevant, `--loader-snaps -v` output so loader-snaps enable/offset notes are visible
+- if relevant, `--trace -v` output (and `--loader-snaps -v` when using loader-snaps) so full diagnostics and loader-snaps notes are visible

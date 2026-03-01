@@ -9,6 +9,8 @@ mod dynamic_loadlibrary_name;
 mod dynamic_missing_direct;
 #[path = "integration/imports_transitive_missing.rs"]
 mod imports_transitive_missing;
+#[path = "integration/run_output_modes.rs"]
+mod run_output_modes;
 #[path = "integration/static_missing_direct.rs"]
 mod static_missing_direct;
 #[path = "integration/static_missing_transitive.rs"]

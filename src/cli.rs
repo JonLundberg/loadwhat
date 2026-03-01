@@ -16,6 +16,7 @@ pub struct RunOptions {
     pub cwd: Option<PathBuf>,
     pub timeout_ms: u32,
     pub loader_snaps: bool,
+    pub trace: bool,
     pub verbose: bool,
 }
 
@@ -62,6 +63,7 @@ fn parse_run(values: &[OsString]) -> Result<Command, String> {
     let mut cwd = None;
     let mut timeout_ms = 30_000;
     let mut loader_snaps = false;
+    let mut trace = false;
     let mut exe_args = Vec::new();
     let mut verbose = false;
 
@@ -94,6 +96,12 @@ fn parse_run(values: &[OsString]) -> Result<Command, String> {
             "--verbose" | "-v" => {
                 verbose = true;
             }
+            "--trace" => {
+                trace = true;
+            }
+            "--summary" => {
+                trace = false;
+            }
             "--loader-snaps" => {
                 loader_snaps = true;
             }
@@ -109,12 +117,17 @@ fn parse_run(values: &[OsString]) -> Result<Command, String> {
         i += 1;
     }
 
+    if verbose {
+        trace = true;
+    }
+
     Ok(Command::Run(RunOptions {
         exe_path,
         exe_args,
         cwd,
         timeout_ms,
         loader_snaps,
+        trace,
         verbose,
     }))
 }
@@ -155,7 +168,7 @@ pub fn usage() -> String {
     out.push_str("loadwhat - diagnose Windows DLL loading failures\n\n");
     out.push_str("Usage:\n");
     out.push_str(
-        "  loadwhat run <exe_path> [--cwd <dir>] [--timeout-ms <n>] [--loader-snaps] [-v|--verbose] [-- <args...>]\n",
+        "  loadwhat run <exe_path> [--cwd <dir>] [--timeout-ms <n>] [--loader-snaps] [--trace|--summary] [-v|--verbose] [-- <args...>]\n",
     );
     out.push_str("  loadwhat imports <exe_or_dll> [--cwd <dir>]\n");
     out.push_str("  loadwhat help\n");
@@ -205,6 +218,29 @@ mod tests {
         match cmd {
             Command::Run(opts) => {
                 assert!(opts.loader_snaps);
+            }
+            _ => panic!("expected run command"),
+        }
+    }
+
+    #[test]
+    fn parses_run_trace_flag() {
+        let cmd = parse_from(["loadwhat", "run", "notepad.exe", "--trace"]).unwrap();
+        match cmd {
+            Command::Run(opts) => {
+                assert!(opts.trace);
+            }
+            _ => panic!("expected run command"),
+        }
+    }
+
+    #[test]
+    fn verbose_implies_trace() {
+        let cmd = parse_from(["loadwhat", "run", "notepad.exe", "--summary", "-v"]).unwrap();
+        match cmd {
+            Command::Run(opts) => {
+                assert!(opts.verbose);
+                assert!(opts.trace);
             }
             _ => panic!("expected run command"),
         }
