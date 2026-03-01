@@ -4,11 +4,23 @@ use std::mem;
 use crate::win;
 
 const FLG_SHOW_LDR_SNAPS: u32 = 0x0000_0002;
-const IFEO_BASE: &str = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options";
+const IFEO_BASE: &str =
+    r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options";
 const GLOBAL_FLAG_VALUE: &str = "GlobalFlag";
 const PEB_NT_GLOBAL_FLAG_OFFSET_X64: usize = 0xBC;
 const ERROR_INVALID_PARAMETER: u32 = 87;
 const ERROR_PARTIAL_COPY: u32 = 299;
+
+#[derive(Clone, Copy)]
+pub struct PebEnableInfo {
+    pub os_version: Option<win::OsVersion>,
+    pub ntglobalflag_offset: usize,
+}
+
+pub enum PebEnableError {
+    UnsupportedWow64,
+    Win32 { code: u32, info: PebEnableInfo },
+}
 
 pub struct LoaderSnapsGuard {
     key_path: String,
@@ -76,9 +88,26 @@ impl Drop for LoaderSnapsGuard {
     }
 }
 
-pub fn enable_via_peb(process: win::Handle) -> Result<(), u32> {
+pub fn enable_via_peb(process: win::Handle) -> Result<PebEnableInfo, PebEnableError> {
+    let os_version = win::rtl_get_version();
+    let info = PebEnableInfo {
+        os_version,
+        ntglobalflag_offset: select_ntglobalflag_offset(os_version),
+    };
+
     if process.is_null() {
-        return Err(ERROR_INVALID_PARAMETER);
+        return Err(PebEnableError::Win32 {
+            code: ERROR_INVALID_PARAMETER,
+            info,
+        });
+    }
+
+    match win::is_wow64_process_best_effort(process) {
+        Ok(true) => return Err(PebEnableError::UnsupportedWow64),
+        Ok(false) => {}
+        Err(code) => {
+            return Err(PebEnableError::Win32 { code, info });
+        }
     }
 
     let mut pbi: win::ProcessBasicInformation = unsafe { mem::zeroed() };
@@ -93,21 +122,37 @@ pub fn enable_via_peb(process: win::Handle) -> Result<(), u32> {
         )
     };
     if status < 0 {
-        return Err(status as u32);
+        return Err(PebEnableError::Win32 {
+            code: status as u32,
+            info,
+        });
     }
     if pbi.peb_base_address.is_null() {
-        return Err(ERROR_INVALID_PARAMETER);
+        return Err(PebEnableError::Win32 {
+            code: ERROR_INVALID_PARAMETER,
+            info,
+        });
     }
 
     let nt_global_flag_addr =
-        (pbi.peb_base_address as usize + PEB_NT_GLOBAL_FLAG_OFFSET_X64) as win::Lpvoid;
-    let current = read_u32(process, nt_global_flag_addr as win::Lpcvoid)?;
+        (pbi.peb_base_address as usize + info.ntglobalflag_offset) as win::Lpvoid;
+    let current = read_u32(process, nt_global_flag_addr as win::Lpcvoid)
+        .map_err(|code| PebEnableError::Win32 { code, info })?;
     let updated = current | FLG_SHOW_LDR_SNAPS;
     if updated != current {
-        write_u32(process, nt_global_flag_addr, updated)?;
+        write_u32(process, nt_global_flag_addr, updated)
+            .map_err(|code| PebEnableError::Win32 { code, info })?;
     }
 
-    Ok(())
+    Ok(info)
+}
+
+fn select_ntglobalflag_offset(os_version: Option<win::OsVersion>) -> usize {
+    match os_version {
+        Some(v) if v.major >= 10 => PEB_NT_GLOBAL_FLAG_OFFSET_X64,
+        Some(_) => PEB_NT_GLOBAL_FLAG_OFFSET_X64,
+        None => PEB_NT_GLOBAL_FLAG_OFFSET_X64,
+    }
 }
 
 fn open_or_create_key(path: &str) -> Result<win::Hkey, u32> {
@@ -268,7 +313,7 @@ fn write_u32(process: win::Handle, address: win::Lpvoid, value: u32) -> Result<(
 
 #[cfg(test)]
 mod tests {
-    use super::{enable_via_peb, LoaderSnapsGuard};
+    use super::{enable_via_peb, LoaderSnapsGuard, PebEnableError};
 
     #[test]
     fn enable_for_image_rejects_empty_name() {
@@ -279,6 +324,9 @@ mod tests {
     #[test]
     fn enable_via_peb_rejects_null_process() {
         let result = enable_via_peb(std::ptr::null_mut());
-        assert_eq!(result.err(), Some(87));
+        assert!(matches!(
+            result,
+            Err(PebEnableError::Win32 { code: 87, .. })
+        ));
     }
 }

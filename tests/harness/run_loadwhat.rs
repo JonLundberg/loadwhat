@@ -95,4 +95,3 @@ fn read_to_string<R: Read>(mut reader: R) -> Result<String, String> {
         .map_err(|e| format!("pipe read failed: {e}"))?;
     Ok(String::from_utf8_lossy(&bytes).to_string())
 }
-

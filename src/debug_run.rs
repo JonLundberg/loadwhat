@@ -40,6 +40,7 @@ pub struct RunOutcome {
     pub pid: u32,
     pub runtime_events: Vec<RuntimeEvent>,
     pub loaded_modules: Vec<LoadedModule>,
+    pub loader_snaps_peb: Option<loader_snaps::PebEnableInfo>,
     pub end_kind: RunEndKind,
     pub exit_code: Option<u32>,
     pub exception_code: Option<u32>,
@@ -48,7 +49,8 @@ pub struct RunOutcome {
 
 pub enum RunError {
     Message(String),
-    PebLoaderSnapsEnableFailed(u32),
+    PebLoaderSnapsEnableFailed(loader_snaps::PebEnableInfo, u32),
+    UnsupportedWow64Target,
 }
 
 pub fn run_target(
@@ -100,14 +102,28 @@ pub fn run_target(
         )));
     }
 
+    let mut loader_snaps_peb = None;
     if enable_loader_snaps_peb {
-        if let Err(code) = loader_snaps::enable_via_peb(pi.h_process) {
-            unsafe {
-                let _ = win::TerminateProcess(pi.h_process, code);
+        match loader_snaps::enable_via_peb(pi.h_process) {
+            Ok(info) => {
+                loader_snaps_peb = Some(info);
             }
-            close_if_needed(pi.h_thread);
-            close_if_needed(pi.h_process);
-            return Err(RunError::PebLoaderSnapsEnableFailed(code));
+            Err(loader_snaps::PebEnableError::UnsupportedWow64) => {
+                unsafe {
+                    let _ = win::TerminateProcess(pi.h_process, win::ERROR_INVALID_PARAMETER);
+                }
+                close_if_needed(pi.h_thread);
+                close_if_needed(pi.h_process);
+                return Err(RunError::UnsupportedWow64Target);
+            }
+            Err(loader_snaps::PebEnableError::Win32 { code, info }) => {
+                unsafe {
+                    let _ = win::TerminateProcess(pi.h_process, code);
+                }
+                close_if_needed(pi.h_thread);
+                close_if_needed(pi.h_process);
+                return Err(RunError::PebLoaderSnapsEnableFailed(info, code));
+            }
         }
     }
 
@@ -247,6 +263,7 @@ pub fn run_target(
         pid: pi.dw_process_id,
         runtime_events,
         loaded_modules,
+        loader_snaps_peb,
         end_kind,
         exit_code,
         exception_code,
@@ -297,7 +314,11 @@ fn read_output_debug_string(
             .iter()
             .position(|v| *v == 0)
             .unwrap_or(content.len());
-        return Some(OsString::from_wide(&content[..end]).to_string_lossy().to_string());
+        return Some(
+            OsString::from_wide(&content[..end])
+                .to_string_lossy()
+                .to_string(),
+        );
     }
 
     let mut data = vec![0u8; chars];
@@ -505,8 +526,11 @@ mod tests {
         let result = run_target(&exe, &args, Some(&cwd), 10_000, true);
         let outcome = match result {
             Ok(value) => value,
-            Err(RunError::PebLoaderSnapsEnableFailed(code)) => {
+            Err(RunError::PebLoaderSnapsEnableFailed(_, code)) => {
                 panic!("PEB loader-snaps enable failed: 0x{code:08X}")
+            }
+            Err(RunError::UnsupportedWow64Target) => {
+                panic!("loader-snaps PEB enable rejected WOW64 target unexpectedly")
             }
             Err(RunError::Message(msg)) => panic!("run_target failed: {msg}"),
         };

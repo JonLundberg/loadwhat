@@ -8,8 +8,8 @@ fn static_wrong_pick_prefers_app_directory() {
         return;
     };
 
-    let case =
-        harness::case::TestCase::new(&paths, "static_wrong_pick").expect("failed to initialize test case");
+    let case = harness::case::TestCase::new(&paths, "static_wrong_pick")
+        .expect("failed to initialize test case");
     case.mkdir("app").expect("failed to create app directory");
     let cwd_dir = case.mkdir("cwd").expect("failed to create cwd directory");
 

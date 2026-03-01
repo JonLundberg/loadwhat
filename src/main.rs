@@ -20,7 +20,7 @@ mod search;
 mod win;
 
 #[cfg(windows)]
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 #[cfg(windows)]
 use std::env;
 #[cfg(windows)]
@@ -35,7 +35,7 @@ use debug_run::{LoadedModule, RunEndKind, RunError, RunOutcome, RuntimeEvent};
 #[cfg(windows)]
 use emit::{emit, field, hex_u32, hex_usize, quote};
 #[cfg(windows)]
-use loader_snaps::LoaderSnapsGuard;
+use loader_snaps::{LoaderSnapsGuard, PebEnableInfo};
 #[cfg(windows)]
 use search::{CandidateResult, ResolutionKind, SearchContext};
 
@@ -83,7 +83,7 @@ fn run_command(opts: RunOptions) -> i32 {
     let (outcome, mut snaps_guard) = if opts.loader_snaps {
         match debug_run::run_target(&exe_path, &opts.exe_args, Some(&cwd), opts.timeout_ms, true) {
             Ok(value) => (Ok(value), None),
-            Err(RunError::PebLoaderSnapsEnableFailed(peb_code)) => {
+            Err(RunError::PebLoaderSnapsEnableFailed(peb_info, peb_code)) => {
                 let image_name = exe_path
                     .file_name()
                     .map(|v| v.to_string_lossy().to_string())
@@ -104,6 +104,7 @@ fn run_command(opts: RunOptions) -> i32 {
                 };
 
                 if opts.verbose {
+                    emit_loader_snaps_peb_note(peb_info);
                     emit(
                         "NOTE",
                         &vec![
@@ -125,11 +126,31 @@ fn run_command(opts: RunOptions) -> i32 {
                     Some(guard),
                 )
             }
+            Err(RunError::UnsupportedWow64Target) => {
+                emit(
+                    "NOTE",
+                    &vec![
+                        field("topic", quote("loader-snaps")),
+                        field("detail", quote("wow64-target-unsupported")),
+                        field(
+                            "message",
+                            quote("WOW64 target support is roadmap-only in v1"),
+                        ),
+                    ],
+                );
+                return 22;
+            }
             Err(err) => (Err(err), None),
         }
     } else {
         (
-            debug_run::run_target(&exe_path, &opts.exe_args, Some(&cwd), opts.timeout_ms, false),
+            debug_run::run_target(
+                &exe_path,
+                &opts.exe_args,
+                Some(&cwd),
+                opts.timeout_ms,
+                false,
+            ),
             None,
         )
     };
@@ -153,11 +174,31 @@ fn run_command(opts: RunOptions) -> i32 {
             eprintln!("{err}");
             return if test_mode { 10 } else { 21 };
         }
-        Err(RunError::PebLoaderSnapsEnableFailed(code)) => {
+        Err(RunError::PebLoaderSnapsEnableFailed(_, code)) => {
             eprintln!("loader-snaps PEB enable failed: 0x{code:08X}");
             return if test_mode { 10 } else { 21 };
         }
+        Err(RunError::UnsupportedWow64Target) => {
+            emit(
+                "NOTE",
+                &vec![
+                    field("topic", quote("loader-snaps")),
+                    field("detail", quote("wow64-target-unsupported")),
+                    field(
+                        "message",
+                        quote("WOW64 target support is roadmap-only in v1"),
+                    ),
+                ],
+            );
+            return 22;
+        }
     };
+
+    if opts.verbose && opts.loader_snaps {
+        if let Some(info) = outcome.loader_snaps_peb {
+            emit_loader_snaps_peb_note(info);
+        }
+    }
 
     if opts.verbose {
         emit_run_events(&exe_path, &cwd, &outcome);
@@ -234,14 +275,16 @@ fn run_command(opts: RunOptions) -> i32 {
                         );
                         match issue.kind {
                             ResolutionKind::Missing => {
-                                emit(
-                                    "STATIC_MISSING",
-                                    &vec![
-                                        field("module", quote(&issue.module)),
-                                        field("dll", quote(&issue.dll)),
-                                        field("reason", quote("NOT_FOUND")),
-                                    ],
-                                );
+                                let mut fields = vec![
+                                    field("module", quote(&issue.module)),
+                                    field("dll", quote(&issue.dll)),
+                                    field("reason", quote("NOT_FOUND")),
+                                ];
+                                if issue.depth > 1 {
+                                    fields.push(field("via", quote(&issue.via)));
+                                    fields.push(field("depth", issue.depth.to_string()));
+                                }
+                                emit("STATIC_MISSING", &fields);
                             }
                             ResolutionKind::BadImage => {
                                 emit(
@@ -295,7 +338,9 @@ fn run_command(opts: RunOptions) -> i32 {
                 }
             } else {
                 let app_dir = exe_path.parent().unwrap_or_else(|| Path::new("."));
-                if let Ok(context) = SearchContext::from_environment(app_dir, &cwd, env_path_override(&[])) {
+                if let Ok(context) =
+                    SearchContext::from_environment(app_dir, &cwd, env_path_override(&[]))
+                {
                     emit(
                         "SEARCH_ORDER",
                         &vec![field("safedll", if context.safedll { "1" } else { "0" })],
@@ -343,12 +388,15 @@ fn run_command(opts: RunOptions) -> i32 {
     }
 
     if test_mode {
-        emit_lwtest_lines(&outcome.loaded_modules, detected_missing_name.as_deref(), outcome.exit_code);
-        let load_failure_detected =
-            detected_missing_name.is_some()
-                || missing_or_bad > 0
-                || dynamic_failure_seen
-                || loader_exception.is_some();
+        emit_lwtest_lines(
+            &outcome.loaded_modules,
+            detected_missing_name.as_deref(),
+            outcome.exit_code,
+        );
+        let load_failure_detected = detected_missing_name.is_some()
+            || missing_or_bad > 0
+            || dynamic_failure_seen
+            || loader_exception.is_some();
         return test_mode_exit_code(&outcome, load_failure_detected);
     }
 
@@ -487,8 +535,30 @@ fn emit_run_events(exe_path: &Path, cwd: &Path, outcome: &RunOutcome) {
 }
 
 #[cfg(windows)]
+fn emit_loader_snaps_peb_note(info: PebEnableInfo) {
+    let os = match info.os_version {
+        Some(v) => format!("{}.{}.{}", v.major, v.minor, v.build),
+        None => "unknown".to_string(),
+    };
+    emit(
+        "NOTE",
+        &vec![
+            field("topic", quote("loader-snaps")),
+            field("detail", quote("peb-ntglobalflag")),
+            field("os", quote(&os)),
+            field(
+                "ntglobalflag_offset",
+                format!("0x{:X}", info.ntglobalflag_offset),
+            ),
+        ],
+    );
+}
+
+#[cfg(windows)]
 struct FirstIssue {
     module: String,
+    via: String,
+    depth: u32,
     dll: String,
     diagnosis: &'static str,
     kind: ResolutionKind,
@@ -510,6 +580,13 @@ enum StaticEmitMode {
 }
 
 #[cfg(windows)]
+struct WalkNode {
+    module_path: PathBuf,
+    module_name: String,
+    depth: u32,
+}
+
+#[cfg(windows)]
 fn diagnose_static_imports(
     module_path: &Path,
     cwd: &Path,
@@ -523,19 +600,15 @@ fn diagnose_static_imports(
             module_path.display()
         )
     })?;
-    let imports = pe::direct_imports(module_path)?;
     let context = SearchContext::from_environment(app_dir, cwd, path_env_override)?;
-    let module_name = module_path
-        .file_name()
-        .map(|v| v.to_string_lossy().to_string())
-        .unwrap_or_else(|| module_path.display().to_string());
+    let root_module_name = module_name_lower(module_path);
 
     if matches!(emit_mode, StaticEmitMode::Full) {
         emit(
             "STATIC_START",
             &vec![
                 field("module", quote(&display_path(module_path))),
-                field("scope", quote("direct-imports")),
+                field("scope", quote("direct-and-recursive-imports")),
             ],
         );
         emit(
@@ -545,118 +618,164 @@ fn diagnose_static_imports(
     }
 
     let mut missing = 0usize;
-    let mut first_issue = None;
+    let mut first_issue = None::<FirstIssue>;
+    let mut visited = HashSet::new();
+    let mut queue = VecDeque::new();
+    let mut max_parent_depth_for_failures = None::<u32>;
 
-    for dll in imports {
-        if matches!(emit_mode, StaticEmitMode::Full) {
-            emit(
-                "STATIC_IMPORT",
-                &vec![
-                    field("module", quote(&module_name)),
-                    field("needs", quote(&dll)),
-                ],
-            );
+    visited.insert(normalize_module_visit_key(module_path));
+    queue.push_back(WalkNode {
+        module_path: module_path.to_path_buf(),
+        module_name: root_module_name,
+        depth: 0,
+    });
+
+    while let Some(node) = queue.pop_front() {
+        if matches!(emit_mode, StaticEmitMode::FailuresOnly) {
+            if let Some(limit) = max_parent_depth_for_failures {
+                if node.depth > limit {
+                    break;
+                }
+            }
         }
 
-        if runtime_loaded.contains(&dll) {
+        let imports = pe::direct_imports(&node.module_path)?;
+        for dll in imports {
+            if is_api_set_dll(&dll) {
+                continue;
+            }
+
             if matches!(emit_mode, StaticEmitMode::Full) {
                 emit(
-                    "STATIC_FOUND",
+                    "STATIC_IMPORT",
                     &vec![
-                        field("module", quote(&module_name)),
-                        field("dll", quote(&dll)),
-                        field("reason", quote("RUNTIME_OBSERVED")),
+                        field("module", quote(&node.module_name)),
+                        field("needs", quote(&dll)),
                     ],
                 );
             }
-            continue;
-        }
 
-        let resolution = search::resolve_dll(&dll, &context);
-        if matches!(emit_mode, StaticEmitMode::Full) {
-            for candidate in &resolution.candidates {
-                emit(
-                    "SEARCH_PATH",
-                    &vec![
-                        field("dll", quote(&dll)),
-                        field("order", candidate.order.to_string()),
-                        field("path", quote(&display_path(&candidate.path))),
-                        field("result", quote(candidate.result)),
-                    ],
-                );
-            }
-        }
-
-        match &resolution.kind {
-            ResolutionKind::Found => {
+            if node.depth == 0 && runtime_loaded.contains(&dll) {
                 if matches!(emit_mode, StaticEmitMode::Full) {
                     emit(
                         "STATIC_FOUND",
                         &vec![
-                            field("module", quote(&module_name)),
+                            field("module", quote(&node.module_name)),
                             field("dll", quote(&dll)),
-                            field(
-                                "path",
-                                quote(
-                                    &resolution
-                                        .chosen
-                                        .as_ref()
-                                        .map(|v| display_path(v))
-                                        .unwrap_or_else(|| String::from("UNKNOWN")),
-                                ),
-                            ),
+                            field("reason", quote("RUNTIME_OBSERVED")),
+                        ],
+                    );
+                }
+                continue;
+            }
+
+            let resolution = search::resolve_dll(&dll, &context);
+            if matches!(emit_mode, StaticEmitMode::Full) {
+                for candidate in &resolution.candidates {
+                    emit(
+                        "SEARCH_PATH",
+                        &vec![
+                            field("dll", quote(&dll)),
+                            field("order", candidate.order.to_string()),
+                            field("path", quote(&display_path(&candidate.path))),
+                            field("result", quote(candidate.result)),
                         ],
                     );
                 }
             }
-            ResolutionKind::Missing => {
-                missing += 1;
-                if first_issue.is_none() {
-                    first_issue = Some(FirstIssue {
-                        module: module_name.clone(),
+
+            match &resolution.kind {
+                ResolutionKind::Found => {
+                    if matches!(emit_mode, StaticEmitMode::Full) {
+                        emit(
+                            "STATIC_FOUND",
+                            &vec![
+                                field("module", quote(&node.module_name)),
+                                field("dll", quote(&dll)),
+                                field(
+                                    "path",
+                                    quote(
+                                        &resolution
+                                            .chosen
+                                            .as_ref()
+                                            .map(|v| display_path(v))
+                                            .unwrap_or_else(|| String::from("UNKNOWN")),
+                                    ),
+                                ),
+                            ],
+                        );
+                    }
+
+                    if let Some(chosen) = resolution.chosen.as_ref() {
+                        let key = normalize_module_visit_key(chosen);
+                        if visited.insert(key) {
+                            queue.push_back(WalkNode {
+                                module_path: chosen.clone(),
+                                module_name: module_name_lower(chosen),
+                                depth: node.depth + 1,
+                            });
+                        }
+                    }
+                }
+                ResolutionKind::Missing => {
+                    missing += 1;
+                    let issue = FirstIssue {
+                        module: node.module_name.clone(),
+                        via: node.module_name.clone(),
+                        depth: node.depth + 1,
                         dll: dll.clone(),
                         diagnosis: "MISSING_STATIC_IMPORT",
                         kind: ResolutionKind::Missing,
                         candidates: resolution.candidates.clone(),
-                    });
-                }
-                if matches!(emit_mode, StaticEmitMode::Full) {
-                    emit(
-                        "STATIC_MISSING",
-                        &vec![
-                            field("module", quote(&module_name)),
+                    };
+                    consider_first_issue(&mut first_issue, issue);
+
+                    if matches!(emit_mode, StaticEmitMode::Full) {
+                        let mut fields = vec![
+                            field("module", quote(&node.module_name)),
                             field("dll", quote(&dll)),
                             field("reason", quote("NOT_FOUND")),
-                        ],
-                    );
+                        ];
+                        if node.depth + 1 > 1 {
+                            fields.push(field("via", quote(&node.module_name)));
+                            fields.push(field("depth", (node.depth + 1).to_string()));
+                        }
+                        emit("STATIC_MISSING", &fields);
+                    }
+
+                    if matches!(emit_mode, StaticEmitMode::FailuresOnly) {
+                        max_parent_depth_for_failures.get_or_insert(node.depth);
+                    }
                 }
-            }
-            ResolutionKind::BadImage => {
-                missing += 1;
-                if first_issue.is_none() {
-                    first_issue = Some(FirstIssue {
-                        module: module_name.clone(),
+                ResolutionKind::BadImage => {
+                    missing += 1;
+                    let issue = FirstIssue {
+                        module: node.module_name.clone(),
+                        via: node.module_name.clone(),
+                        depth: node.depth + 1,
                         dll: dll.clone(),
                         diagnosis: "BAD_STATIC_IMPORT_IMAGE",
                         kind: ResolutionKind::BadImage,
                         candidates: resolution.candidates.clone(),
-                    });
-                }
-                if matches!(emit_mode, StaticEmitMode::Full) {
-                    emit(
-                        "STATIC_BAD_IMAGE",
-                        &vec![
-                            field("module", quote(&module_name)),
-                            field("dll", quote(&dll)),
-                            field("reason", quote("BAD_IMAGE")),
-                        ],
-                    );
+                    };
+                    consider_first_issue(&mut first_issue, issue);
+
+                    if matches!(emit_mode, StaticEmitMode::Full) {
+                        emit(
+                            "STATIC_BAD_IMAGE",
+                            &vec![
+                                field("module", quote(&node.module_name)),
+                                field("dll", quote(&dll)),
+                                field("reason", quote("BAD_IMAGE")),
+                            ],
+                        );
+                    }
+
+                    if matches!(emit_mode, StaticEmitMode::FailuresOnly) {
+                        max_parent_depth_for_failures.get_or_insert(node.depth);
+                    }
                 }
             }
-        }
-
-        if matches!(emit_mode, StaticEmitMode::FailuresOnly) && first_issue.is_some() {
-            break;
         }
     }
 
@@ -679,6 +798,51 @@ fn diagnose_static_imports(
         first_issue,
         safedll: context.safedll,
     })
+}
+
+#[cfg(windows)]
+fn consider_first_issue(current: &mut Option<FirstIssue>, candidate: FirstIssue) {
+    let replace = match current {
+        None => true,
+        Some(existing) => {
+            (
+                candidate.depth,
+                candidate.via.as_str(),
+                candidate.dll.as_str(),
+            ) < (existing.depth, existing.via.as_str(), existing.dll.as_str())
+        }
+    };
+    if replace {
+        *current = Some(candidate);
+    }
+}
+
+#[cfg(windows)]
+fn is_api_set_dll(dll: &str) -> bool {
+    let lower = dll.to_ascii_lowercase();
+    lower.starts_with("api-ms-win-") || lower.starts_with("ext-ms-win-")
+}
+
+#[cfg(windows)]
+fn module_name_lower(path: &Path) -> String {
+    path.file_name()
+        .map(|value| value.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_else(|| path.display().to_string().to_ascii_lowercase())
+}
+
+#[cfg(windows)]
+fn normalize_module_visit_key(path: &Path) -> String {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(path)
+    };
+    let canonical = std::fs::canonicalize(path).unwrap_or(absolute);
+    display_path(&canonical)
+        .replace('/', "\\")
+        .to_ascii_lowercase()
 }
 
 #[cfg(windows)]
@@ -744,10 +908,7 @@ fn emit_lwtest_lines(modules: &[LoadedModule], missing_name: Option<&str>, exit_
         };
         emit(
             "LWTEST:LOAD",
-            &vec![
-                field("name", dll_name),
-                field("path", display_path(path)),
-            ],
+            &vec![field("name", dll_name), field("path", display_path(path))],
         );
     }
 
@@ -866,7 +1027,9 @@ fn detect_dynamic_missing_from_debug_strings(outcome: &RunOutcome) -> Option<Dyn
         };
         let replace = match &best {
             None => true,
-            Some((best_score, best_idx, _)) => score > *best_score || (score == *best_score && idx > *best_idx),
+            Some((best_score, best_idx, _)) => {
+                score > *best_score || (score == *best_score && idx > *best_idx)
+            }
         };
         if replace {
             best = Some((score, idx, detected));
@@ -913,7 +1076,9 @@ fn failure_score(text_lower: &str) -> i32 {
     if text_lower.contains("walking the import tables") {
         return 90;
     }
-    if text_lower.contains("process initialization failed") || text_lower.contains("_ldrpinitialize - error") {
+    if text_lower.contains("process initialization failed")
+        || text_lower.contains("_ldrpinitialize - error")
+    {
         return 85;
     }
     if text_lower.contains("ldrloaddll") && text_lower.contains("failed") {
@@ -1023,7 +1188,9 @@ fn extract_dll_basenames(text_lower: &str) -> Vec<String> {
             .rsplit(['\\', '/'])
             .next()
             .unwrap_or(token)
-            .trim_matches(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-'))
+            .trim_matches(|c: char| {
+                !(c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '-')
+            })
             .to_string();
 
         if !basename.is_empty() && basename.ends_with(".dll") {
@@ -1101,6 +1268,7 @@ mod dynamic_missing_tests {
             pid: 1,
             runtime_events: events,
             loaded_modules: Vec::new(),
+            loader_snaps_peb: None,
             end_kind: RunEndKind::ExitProcess,
             exit_code: Some(0),
             exception_code: None,
@@ -1113,7 +1281,8 @@ mod dynamic_missing_tests {
         let outcome = outcome_with_debug_lines(&[
             r#"LdrLoadDll failed for C:\App\foo.dll Status: 0xC0000135"#,
         ]);
-        let detected = detect_dynamic_missing_from_debug_strings(&outcome).expect("expected dynamic missing");
+        let detected =
+            detect_dynamic_missing_from_debug_strings(&outcome).expect("expected dynamic missing");
         assert_eq!(detected.dll, "foo.dll");
         assert_eq!(detected.reason, "NOT_FOUND");
         assert_eq!(detected.status, Some(0xC0000135));
@@ -1125,7 +1294,8 @@ mod dynamic_missing_tests {
             r#"LdrLoadDll - ENTER: DLL name: C:\App\bar.dll"#,
             r#"LdrpInitializeProcess - ERROR: Walking the import tables of the executable and its static imports failed with status 0xc0000135"#,
         ]);
-        let detected = detect_dynamic_missing_from_debug_strings(&outcome).expect("expected dynamic missing");
+        let detected =
+            detect_dynamic_missing_from_debug_strings(&outcome).expect("expected dynamic missing");
         assert_eq!(detected.dll, "bar.dll");
         assert_eq!(detected.reason, "NOT_FOUND");
     }
@@ -1135,7 +1305,8 @@ mod dynamic_missing_tests {
         let outcome = outcome_with_debug_lines(&[
             r#"LdrLoadDll failed for api-ms-win-core-file-l1-2-0.dll while loading mydep.dll Status: 0xC0000135"#,
         ]);
-        let detected = detect_dynamic_missing_from_debug_strings(&outcome).expect("expected dynamic missing");
+        let detected =
+            detect_dynamic_missing_from_debug_strings(&outcome).expect("expected dynamic missing");
         assert_eq!(detected.dll, "mydep.dll");
     }
 
@@ -1145,7 +1316,8 @@ mod dynamic_missing_tests {
             r#"LdrpFindKnownDll - RETURN: Status: 0xc0000135"#,
             r#"LdrpProcessWork - ERROR: Unable to load DLL: "lwtest_b.dll", Parent Module: "C:\App\lwtest_a.dll", Status: 0xc0000135"#,
         ]);
-        let detected = detect_dynamic_missing_from_debug_strings(&outcome).expect("expected dynamic missing");
+        let detected =
+            detect_dynamic_missing_from_debug_strings(&outcome).expect("expected dynamic missing");
         assert_eq!(detected.dll, "lwtest_b.dll");
         assert_eq!(detected.reason, "NOT_FOUND");
         assert_eq!(detected.status, Some(0xC0000135));

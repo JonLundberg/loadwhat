@@ -57,7 +57,10 @@ fn build_fixtures(repo_root: &Path, fixture_bin_root: &Path) -> Result<(), Strin
     let dll_a_proj = msvc_root.join("dll_lwtest_a").join("dll_lwtest_a.vcxproj");
 
     if !solution.exists() {
-        return Err(format!("fixture solution not found: {}", solution.display()));
+        return Err(format!(
+            "fixture solution not found: {}",
+            solution.display()
+        ));
     }
 
     let outdir_prop = format!(
@@ -100,7 +103,11 @@ fn build_fixtures(repo_root: &Path, fixture_bin_root: &Path) -> Result<(), Strin
     Ok(())
 }
 
-fn run_rust_tests(repo_root: &Path, test_root: &Path, fixture_bin_root: &Path) -> Result<(), String> {
+fn run_rust_tests(
+    repo_root: &Path,
+    test_root: &Path,
+    fixture_bin_root: &Path,
+) -> Result<(), String> {
     let mut extra_env = Vec::<(String, String)>::new();
     extra_env.push((
         "LOADWHAT_TEST_ROOT".to_string(),
@@ -128,12 +135,7 @@ fn run_rust_tests(repo_root: &Path, test_root: &Path, fixture_bin_root: &Path) -
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
 
-    run_command(
-        "cargo",
-        &["test", "--tests"],
-        Some(repo_root),
-        &env_refs,
-    )?;
+    run_command("cargo", &["test", "--tests"], Some(repo_root), &env_refs)?;
 
     Ok(())
 }

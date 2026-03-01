@@ -12,15 +12,15 @@ pub const DLL_LWTEST_A_V1: &str = "lwtest_a_v1.dll";
 pub const DLL_LWTEST_A_V2: &str = "lwtest_a_v2.dll";
 pub const DLL_LWTEST_B: &str = "lwtest_b.dll";
 
-pub fn fixture_path_from_root(fixture_bin_root: &Path, fixture_name: &str) -> Result<PathBuf, String> {
+pub fn fixture_path_from_root(
+    fixture_bin_root: &Path,
+    fixture_name: &str,
+) -> Result<PathBuf, String> {
     let path = fixture_bin_root.join(fixture_name);
     if path.exists() {
         Ok(path)
     } else {
-        Err(format!(
-            "fixture binary not found: {}",
-            path.display()
-        ))
+        Err(format!("fixture binary not found: {}", path.display()))
     }
 }
 

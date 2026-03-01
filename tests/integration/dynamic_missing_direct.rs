@@ -33,4 +33,3 @@ fn dynamic_missing_direct_reports_lwtest_a() {
     harness::assert::assert_missing_dll(&result.stdout, "lwtest_a.dll");
     harness::assert::assert_target_exit_code(&result.stdout, 10);
 }
-

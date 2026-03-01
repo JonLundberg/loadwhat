@@ -83,11 +83,7 @@ fn query_dos_device(drive: &str) -> Option<String> {
 
     #[link(name = "Kernel32")]
     extern "system" {
-        fn QueryDosDeviceW(
-            lpDeviceName: *const u16,
-            lpTargetPath: *mut u16,
-            ucchMax: u32,
-        ) -> u32;
+        fn QueryDosDeviceW(lpDeviceName: *const u16, lpTargetPath: *mut u16, ucchMax: u32) -> u32;
         fn GetLastError() -> u32;
     }
 

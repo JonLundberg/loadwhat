@@ -8,8 +8,7 @@ pub fn assert_not_timed_out(result: &RunResult) {
     assert!(
         !result.timed_out,
         "loadwhat command timed out.\nstdout:\n{}\nstderr:\n{}",
-        result.stdout,
-        result.stderr
+        result.stdout, result.stderr
     );
 }
 
@@ -36,8 +35,7 @@ pub fn assert_missing_dll(stdout: &str, dll_name: &str) {
     assert!(
         found,
         "expected missing-dll result for {}.\nstdout:\n{}",
-        dll_name,
-        stdout
+        dll_name, stdout
     );
 }
 
@@ -50,7 +48,11 @@ pub fn assert_no_missing_result(stdout: &str) {
         field_eq(&fields, "kind", "missing_dll")
     });
 
-    assert!(!found, "unexpected missing-dll result.\nstdout:\n{}", stdout);
+    assert!(
+        !found,
+        "unexpected missing-dll result.\nstdout:\n{}",
+        stdout
+    );
 }
 
 pub fn assert_target_exit_code(stdout: &str, expected: i32) {
@@ -68,8 +70,7 @@ pub fn assert_target_exit_code(stdout: &str, expected: i32) {
     assert!(
         found,
         "expected LWTEST:TARGET exit_code={}.\nstdout:\n{}",
-        expected,
-        stdout
+        expected, stdout
     );
 }
 
@@ -77,7 +78,10 @@ pub fn assert_loaded_path(stdout: &str, dll_name: &str, expected_path: &Path) {
     let expected_name = dll_name.to_ascii_lowercase();
     let expected_path_raw = expected_path.display().to_string();
     let expected_path_norm = normalize_for_compare(&expected_path_raw);
-    let expected_raw_line = format!("LWTEST:LOAD name={} path={}", expected_name, expected_path_raw);
+    let expected_raw_line = format!(
+        "LWTEST:LOAD name={} path={}",
+        expected_name, expected_path_raw
+    );
     let mut mismatch_detail = None::<(String, String, String)>;
 
     let found = lwtest_lines(stdout).iter().any(|line| {

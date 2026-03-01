@@ -17,12 +17,8 @@ pub struct TestCase {
 impl TestCase {
     pub fn new(paths: &HarnessPaths, case_name: &str) -> Result<Self, String> {
         let cases_root = paths.test_root.join("cases");
-        fs::create_dir_all(&cases_root).map_err(|e| {
-            format!(
-                "failed to create cases root {}: {e}",
-                cases_root.display()
-            )
-        })?;
+        fs::create_dir_all(&cases_root)
+            .map_err(|e| format!("failed to create cases root {}: {e}", cases_root.display()))?;
 
         let id = NEXT_CASE_ID.fetch_add(1, Ordering::Relaxed);
         let root = cases_root.join(format!("{case_name}-{}-{id}", std::process::id()));
@@ -47,7 +43,11 @@ impl TestCase {
         Ok(path)
     }
 
-    pub fn copy_fixture(&self, fixture_name: &str, destination_relative: &str) -> Result<PathBuf, String> {
+    pub fn copy_fixture(
+        &self,
+        fixture_name: &str,
+        destination_relative: &str,
+    ) -> Result<PathBuf, String> {
         let destination = self.root.join(destination_relative);
         fixture::copy_fixture_from_root(&self.fixture_bin_root, fixture_name, &destination)?;
         Ok(destination)
@@ -80,4 +80,3 @@ impl Drop for TestCase {
 pub fn os(path: &Path) -> OsString {
     path.as_os_str().to_os_string()
 }
-
