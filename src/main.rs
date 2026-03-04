@@ -20,7 +20,7 @@ mod search;
 mod win;
 
 #[cfg(windows)]
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 #[cfg(windows)]
 use std::env;
 #[cfg(windows)]
@@ -214,11 +214,27 @@ fn run_command(opts: RunOptions) -> i32 {
         emit_run_events(&exe_path, &cwd, &outcome);
     }
 
-    let loaded_names: HashSet<String> = outcome
-        .loaded_modules
-        .iter()
-        .map(|m| m.dll_name.to_ascii_lowercase())
-        .collect();
+    let mut runtime_loaded: HashSet<String> = HashSet::new();
+    let mut runtime_observed: HashMap<String, PathBuf> = HashMap::new();
+    for module in &outcome.loaded_modules {
+        let dll = module.dll_name.to_ascii_lowercase();
+        runtime_loaded.insert(dll.clone());
+
+        let Some(path) = module.path.as_ref() else {
+            continue;
+        };
+
+        match runtime_observed.get_mut(&dll) {
+            Some(existing) => {
+                if prefer_runtime_observed_path(path, existing.as_path()) {
+                    *existing = path.clone();
+                }
+            }
+            None => {
+                runtime_observed.insert(dll, path.clone());
+            }
+        }
+    }
 
     let mut first_break = false;
     let mut missing_or_bad = 0usize;
@@ -246,8 +262,14 @@ fn run_command(opts: RunOptions) -> i32 {
         } else {
             StaticEmitMode::FailuresOnly
         };
-        let diag =
-            diagnose_static_imports(&exe_path, &cwd, &loaded_names, env_path_override(&[]), mode);
+        let diag = diagnose_static_imports(
+            &exe_path,
+            &cwd,
+            &runtime_loaded,
+            &runtime_observed,
+            env_path_override(&[]),
+            mode,
+        );
         match diag {
             Ok(report) => {
                 missing_or_bad = report.missing_or_bad;
@@ -494,10 +516,13 @@ fn imports_command(opts: ImportsOptions) -> i32 {
         .cwd
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
+    let runtime_loaded: HashSet<String> = HashSet::new();
+    let runtime_observed: HashMap<String, PathBuf> = HashMap::new();
     let diag = diagnose_static_imports(
         &module_path,
         &cwd,
-        &HashSet::new(),
+        &runtime_loaded,
+        &runtime_observed,
         env_path_override(&[]),
         StaticEmitMode::Full,
     );
@@ -650,6 +675,7 @@ fn diagnose_static_imports(
     module_path: &Path,
     cwd: &Path,
     runtime_loaded: &HashSet<String>,
+    runtime_observed: &HashMap<String, PathBuf>,
     path_env_override: Option<OsString>,
     emit_mode: StaticEmitMode,
 ) -> Result<StaticReport, String> {
@@ -685,7 +711,7 @@ fn diagnose_static_imports(
     visited.insert(normalize_module_visit_key(module_path));
     queue.push_back(WalkNode {
         module_path: module_path.to_path_buf(),
-        module_name: root_module_name,
+        module_name: root_module_name.clone(),
         depth: 0,
     });
 
@@ -727,6 +753,21 @@ fn diagnose_static_imports(
                             field("reason", quote("RUNTIME_OBSERVED")),
                         ],
                     );
+                }
+
+                let observed_path = runtime_observed
+                    .get(&dll)
+                    .cloned()
+                    .or_else(|| search::resolve_dll(&dll, &context).chosen);
+                if let Some(path) = observed_path {
+                    let key = normalize_module_visit_key(&path);
+                    if visited.insert(key) {
+                        queue.push_back(WalkNode {
+                            module_path: path.clone(),
+                            module_name: module_name_lower(&path),
+                            depth: node.depth + 1,
+                        });
+                    }
                 }
                 continue;
             }
@@ -782,7 +823,7 @@ fn diagnose_static_imports(
                 ResolutionKind::Missing => {
                     missing += 1;
                     let issue = FirstIssue {
-                        module: node.module_name.clone(),
+                        module: root_module_name.clone(),
                         via: node.module_name.clone(),
                         depth: node.depth + 1,
                         dll: dll.clone(),
@@ -815,7 +856,7 @@ fn diagnose_static_imports(
                 ResolutionKind::BadImage => {
                     missing += 1;
                     let issue = FirstIssue {
-                        module: node.module_name.clone(),
+                        module: root_module_name.clone(),
                         via: node.module_name.clone(),
                         depth: node.depth + 1,
                         dll: dll.clone(),
@@ -911,6 +952,13 @@ fn normalize_module_visit_key(path: &Path) -> String {
     display_path(&canonical)
         .replace('/', "\\")
         .to_ascii_lowercase()
+}
+
+#[cfg(windows)]
+fn prefer_runtime_observed_path(candidate: &Path, existing: &Path) -> bool {
+    let candidate_key = normalize_module_visit_key(candidate);
+    let existing_key = normalize_module_visit_key(existing);
+    (candidate_key.len(), candidate_key.as_str()) < (existing_key.len(), existing_key.as_str())
 }
 
 #[cfg(windows)]

@@ -62,6 +62,67 @@ fn run_summary_emits_single_static_missing_line() {
         lines[0]
     );
     assert!(
+        !lines[0].contains("via=") && !lines[0].contains("depth="),
+        "direct missing should not include transitive fields.\n{}",
+        lines[0]
+    );
+    assert!(
+        !result.stdout.contains("SEARCH_ORDER")
+            && !result.stdout.contains("SEARCH_PATH")
+            && !result.stdout.contains("NOTE "),
+        "summary mode should not emit trace/note lines.\n{}",
+        result.stdout
+    );
+}
+
+#[test]
+fn run_summary_emits_transitive_static_missing_with_via_and_depth() {
+    let Some(paths) = harness::paths::from_env() else {
+        return;
+    };
+
+    let case = harness::case::TestCase::new(&paths, "run_summary_transitive_missing")
+        .expect("failed to initialize test case");
+    let app_dir = case.mkdir("app").expect("failed to create app directory");
+    let exe = case
+        .copy_fixture(
+            harness::fixture::HOST_STATIC_A_DEPENDS_ON_B_EXE,
+            "app\\host_static_a_depends_on_b.exe",
+        )
+        .expect("failed to copy host fixture");
+    case.copy_fixture_as(harness::fixture::DLL_LWTEST_A, "app", "lwtest_a.dll")
+        .expect("failed to copy lwtest_a.dll fixture");
+
+    let args = vec![
+        OsString::from("run"),
+        harness::case::os(&exe),
+        OsString::from("--cwd"),
+        harness::case::os(&app_dir),
+    ];
+    let result =
+        harness::run_loadwhat::run_public(&paths, case.root(), &args, Duration::from_secs(20))
+            .expect("failed to run loadwhat");
+
+    harness::assert::assert_not_timed_out(&result);
+    harness::assert::assert_exit_code(&result, 10);
+
+    let lines = token_lines(&result.stdout);
+    assert_eq!(
+        lines.len(),
+        1,
+        "expected one summary line.\n{}",
+        result.stdout
+    );
+    assert!(
+        lines[0].starts_with("STATIC_MISSING ")
+            && lines[0].contains(r#"module="host_static_a_depends_on_b.exe""#)
+            && lines[0].contains(r#"dll="lwtest_b.dll""#)
+            && lines[0].contains(r#"via="lwtest_a.dll""#)
+            && lines[0].contains("depth=2"),
+        "unexpected summary line: {}",
+        lines[0]
+    );
+    assert!(
         !result.stdout.contains("SEARCH_ORDER")
             && !result.stdout.contains("SEARCH_PATH")
             && !result.stdout.contains("NOTE "),
