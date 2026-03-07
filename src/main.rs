@@ -1109,6 +1109,7 @@ fn detect_dynamic_missing_from_debug_strings(
 ) -> Option<DynamicMissing> {
     let mut last_load_by_tid: HashMap<u32, String> = HashMap::new();
     let mut candidates: Vec<DynamicCandidate> = Vec::new();
+    let mut last_failure_candidate_by_tid: HashMap<u32, usize> = HashMap::new();
     let mut latest_loaded_idx_by_basename: HashMap<String, usize> = HashMap::new();
 
     for (idx, event) in outcome.runtime_events.iter().enumerate() {
@@ -1139,6 +1140,17 @@ fn detect_dynamic_missing_from_debug_strings(
             }
         }
 
+        if let Some(status) = extract_status_return_only(&lower) {
+            if let Some(idx) = last_failure_candidate_by_tid.get(&debug.tid).copied() {
+                if let Some(candidate) = candidates.get_mut(idx) {
+                    if candidate.status.is_none() {
+                        candidate.status = Some(status);
+                        candidate.reason = classify_dynamic_reason(&lower, Some(status));
+                    }
+                }
+            }
+        }
+
         if is_ignored_probe_line(&lower) {
             continue;
         }
@@ -1163,22 +1175,7 @@ fn detect_dynamic_missing_from_debug_strings(
             continue;
         };
 
-        let reason = match status {
-            Some(0xC0000135) | Some(0x8007007E) => "NOT_FOUND",
-            Some(0xC000007B) | Some(0x800700C1) => "BAD_IMAGE",
-            _ => {
-                if lower.contains("not found")
-                    || lower.contains("could not be found")
-                    || lower.contains("file not found")
-                {
-                    "NOT_FOUND"
-                } else if lower.contains("bad image") || lower.contains("invalid image") {
-                    "BAD_IMAGE"
-                } else {
-                    "OTHER"
-                }
-            }
-        };
+        let reason = classify_dynamic_reason(&lower, status);
 
         let dll = if is_noise_dll(&dll) {
             pick_best_dll(&dlls)
@@ -1214,6 +1211,9 @@ fn detect_dynamic_missing_from_debug_strings(
             thread_correlated,
         };
         candidates.push(detected);
+        if !thread_correlated {
+            last_failure_candidate_by_tid.insert(debug.tid, candidates.len() - 1);
+        }
     }
 
     for candidate in &mut candidates {
@@ -1228,6 +1228,9 @@ fn detect_dynamic_missing_from_debug_strings(
         return None;
     }
 
+    // This ordering encodes the Phase C selection rules from the v1 spec:
+    // terminal unresolved failures first, then app-local relevance, then
+    // deterministic earliest/tie-break ordering.
     candidates.sort_by(|a, b| {
         b.kind
             .cmp(&a.kind)
@@ -1269,9 +1272,43 @@ fn has_loader_failure_code(text_lower: &str) -> bool {
     text_lower.contains("0xc0000135")
         || text_lower.contains("0x8007007e")
         || text_lower.contains("0xc000007b")
+        || text_lower.contains("0xc000012f")
         || text_lower.contains("0x800700c1")
         || text_lower.contains("0xc0000139")
         || text_lower.contains("0xc0000142")
+}
+
+#[cfg(windows)]
+fn classify_dynamic_reason(text_lower: &str, status: Option<u32>) -> &'static str {
+    match status {
+        Some(0xC0000135) | Some(0x8007007E) => "NOT_FOUND",
+        Some(0xC000007B) | Some(0x800700C1) | Some(0xC000012F) => "BAD_IMAGE",
+        _ => {
+            if text_lower.contains("not found")
+                || text_lower.contains("could not be found")
+                || text_lower.contains("file not found")
+            {
+                "NOT_FOUND"
+            } else if text_lower.contains("bad image")
+                || text_lower.contains("invalid image")
+                || text_lower.contains("not a valid win32 application")
+            {
+                "BAD_IMAGE"
+            } else {
+                "OTHER"
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+fn extract_status_return_only(text_lower: &str) -> Option<u32> {
+    let is_return = text_lower.contains("ldrloaddll - return")
+        || text_lower.contains("ldrploaddllinternal - return");
+    if !is_return {
+        return None;
+    }
+    extract_first_hex_u32(text_lower).filter(|code| is_loader_related_code(*code))
 }
 
 #[cfg(windows)]
@@ -1281,6 +1318,11 @@ fn failure_score(text_lower: &str) -> i32 {
     }
     if text_lower.contains("- error: unable to load dll") {
         return 95;
+    }
+    if text_lower.contains("ldrpinitializenode - error: init routine")
+        && text_lower.contains("failed during dll_process_attach")
+    {
+        return 92;
     }
     if text_lower.contains("walking the import tables") {
         return 90;
@@ -1310,6 +1352,11 @@ fn classify_dynamic_candidate_kind(text_lower: &str) -> Option<DynamicCandidateK
         || text_lower.contains("- error: unable to load dll")
     {
         return Some(DynamicCandidateKind::UnableToLoadDll);
+    }
+    if text_lower.contains("ldrpinitializenode - error: init routine")
+        && text_lower.contains("failed during dll_process_attach")
+    {
+        return Some(DynamicCandidateKind::InitializeProcessFailure);
     }
     if text_lower.contains("ldrloaddll") && text_lower.contains("failed") {
         return Some(DynamicCandidateKind::LoadDllFailed);
@@ -1809,6 +1856,17 @@ mod dynamic_missing_tests {
     }
 
     #[test]
+    fn detects_bad_image_reason_from_invalid_image_status() {
+        let outcome = outcome_with_debug_lines(&[
+            r#"LdrLoadDll failed for C:\App\bad.dll Status: 0xC000012F"#,
+        ]);
+        let detected = detect_for_tests(&outcome).expect("expected dynamic missing");
+        assert_eq!(detected.dll, "bad.dll");
+        assert_eq!(detected.reason, "BAD_IMAGE");
+        assert_eq!(detected.status, Some(0xC000012F));
+    }
+
+    #[test]
     fn detects_other_reason_from_unknown_status_code() {
         let outcome = outcome_with_debug_lines(&[
             r#"LdrLoadDll failed for C:\App\odd.dll Status: 0xDEADBEEF"#,
@@ -1828,6 +1886,31 @@ mod dynamic_missing_tests {
         let detected = detect_for_tests(&outcome).expect("expected dynamic missing");
         assert_eq!(detected.dll, "spath.dll");
         assert_eq!(detected.reason, "NOT_FOUND");
+    }
+
+    #[test]
+    fn init_routine_attach_failure_reports_target_dll() {
+        let outcome = outcome_with_debug_lines(&[
+            r#"LdrpInitializeNode - ERROR: Init routine 00007FFFECEF10F0 for DLL "C:\App\initfail.dll" failed during DLL_PROCESS_ATTACH"#,
+        ]);
+        let detected = detect_for_tests(&outcome).expect("expected dynamic missing");
+        assert_eq!(detected.dll, "initfail.dll");
+        assert_eq!(detected.reason, "OTHER");
+    }
+
+    #[test]
+    fn init_routine_attach_failure_captures_following_status() {
+        let outcome = outcome_with_events(vec![
+            debug_line(
+                7,
+                r#"LdrpInitializeNode - ERROR: Init routine 00007FFFECEF10F0 for DLL "C:\App\initfail.dll" failed during DLL_PROCESS_ATTACH"#,
+            ),
+            debug_line(7, r#"LdrpLoadDllInternal - RETURN: Status: 0xC0000142"#),
+        ]);
+        let detected = detect_for_tests(&outcome).expect("expected dynamic missing");
+        assert_eq!(detected.dll, "initfail.dll");
+        assert_eq!(detected.reason, "OTHER");
+        assert_eq!(detected.status, Some(0xC0000142));
     }
 
     #[test]

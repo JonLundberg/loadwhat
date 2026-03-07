@@ -19,9 +19,17 @@ extern "C" __declspec(dllexport) int lwtest_fixture_id() {
     return LWTEST_A_V1_ID;
 #elif LWTEST_VARIANT == 2
     return LWTEST_A_V2_ID;
+#elif LWTEST_VARIANT == 3
+    return 3001;
 #else
     return 1999;
 #endif
 }
 
-BOOL WINAPI DllMain(HINSTANCE, DWORD, LPVOID) { return TRUE; }
+BOOL WINAPI DllMain(HINSTANCE, DWORD, LPVOID) {
+#if LWTEST_VARIANT == 3
+    return FALSE;
+#else
+    return TRUE;
+#endif
+}

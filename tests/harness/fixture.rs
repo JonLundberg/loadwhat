@@ -6,10 +6,12 @@ pub const HOST_STATIC_IMPORTS_MISSING_EXE: &str = "host_static_imports_missing.e
 pub const HOST_STATIC_A_DEPENDS_ON_B_EXE: &str = "host_static_a_depends_on_b.exe";
 pub const HOST_DYNAMIC_LOADLIBRARY_NAME_EXE: &str = "host_dynamic_loadlibrary_name.exe";
 pub const HOST_DYNAMIC_LOADLIBRARY_FULLPATH_EXE: &str = "host_dynamic_loadlibrary_fullpath.exe";
+pub const HOST_DYNAMIC_LOADLIBRARY_SEQUENCE_EXE: &str = "host_dynamic_loadlibrary_sequence.exe";
 
 pub const DLL_LWTEST_A: &str = "lwtest_a.dll";
 pub const DLL_LWTEST_A_V1: &str = "lwtest_a_v1.dll";
 pub const DLL_LWTEST_A_V2: &str = "lwtest_a_v2.dll";
+pub const DLL_LWTEST_A_INITFAIL: &str = "lwtest_a_initfail.dll";
 pub const DLL_LWTEST_B: &str = "lwtest_b.dll";
 
 pub fn fixture_path_from_root(

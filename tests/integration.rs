@@ -1,6 +1,8 @@
 #[path = "harness/mod.rs"]
 mod harness;
 
+#[path = "integration/dynamic_loader_snaps_contract.rs"]
+mod dynamic_loader_snaps_contract;
 #[path = "integration/dynamic_loadlibrary_fullpath.rs"]
 mod dynamic_loadlibrary_fullpath;
 #[path = "integration/dynamic_loadlibrary_name.rs"]
