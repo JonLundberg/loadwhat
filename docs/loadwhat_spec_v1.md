@@ -122,6 +122,27 @@ When inference succeeds:
 
 If search context cannot be built, emit only `DYNAMIC_MISSING`.
 
+#### Dynamic candidate selection rules
+
+Phase C is heuristic and is based on loader-snaps debug strings captured through `OUTPUT_DEBUG_STRING_EVENT`; it does not observe `LoadLibrary*` return values directly.
+
+When multiple dynamic-failure candidates are present in one run, `loadwhat` selects a single `DYNAMIC_MISSING` result using these rules:
+
+1. Discard any candidate for a DLL that is later observed to load successfully in the same run.
+2. Prefer candidates that can be correlated to the originating thread's recent load context.
+3. Prefer the earliest remaining unresolved candidate.
+4. Prefer app-local/target-initiated failures over later framework/UI/system noise when both are otherwise plausible.
+5. Apply deterministic tie-break rules if needed:
+   - earliest event order
+   - thread-correlated candidate over uncorrelated candidate
+   - lexicographic DLL name as final tie-break
+
+Purpose:
+
+- report the most likely first unresolved handled dynamic load failure
+- avoid replacing an earlier app-local failure with a later incidental framework load event
+- emit at most one summary diagnosis, representing the highest-ranked unresolved dynamic failure candidate after Phase C filtering and selection
+
 ## 3) Loader Snaps mode (`run --loader-snaps`)
 
 When `--loader-snaps` is present:

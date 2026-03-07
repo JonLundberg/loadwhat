@@ -34,7 +34,7 @@ target\release\loadwhat.exe
 
 `run` Phase B performs direct import diagnosis and an always-on recursive missing-dependency walk (transitive missing detection).
 
-With `--loader-snaps`, `loadwhat` can infer handled dynamic `LoadLibrary*` failures and emit `DYNAMIC_MISSING` with search candidates.
+With `--loader-snaps`, `loadwhat` can heuristically infer handled dynamic `LoadLibrary*` failures from loader-snaps debug strings and emit `DYNAMIC_MISSING`. When multiple dynamic-failure candidates are observed in one run, `loadwhat` prefers the earliest unresolved app-relevant failure and ignores candidates for DLLs that later load successfully. See `docs/loadwhat_spec_v1.md` for the authoritative selection rules.
 Loader-snaps setup uses best-effort `PEB->NtGlobalFlag` enable with Windows version/build detection to pick the x64 offset.
 
 ## Token style
