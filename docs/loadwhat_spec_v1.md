@@ -129,11 +129,11 @@ Phase C is heuristic and is based on loader-snaps debug strings captured through
 When multiple dynamic-failure candidates are present in one run, `loadwhat` selects a single `DYNAMIC_MISSING` result using these rules:
 
 1. Discard any candidate for a DLL that is later observed to load successfully in the same run.
-2. Prefer candidates that can be correlated to the originating thread's recent load context.
-3. Prefer the earliest remaining unresolved candidate.
+2. Use thread-local load context when a failure line omits DLL name; do not cross-correlate load attempts across threads.
+3. Prefer higher-confidence terminal failure candidates (for example `Unable to load DLL`) over weaker contextual candidates.
 4. Prefer app-local/target-initiated failures over later framework/UI/system noise when both are otherwise plausible.
-5. Apply deterministic tie-break rules if needed:
-   - earliest event order
+5. For candidates still tied after the rules above, prefer the earliest remaining unresolved candidate.
+6. Apply deterministic final tie-break rules if needed:
    - thread-correlated candidate over uncorrelated candidate
    - lexicographic DLL name as final tie-break
 
