@@ -9,7 +9,10 @@
         "type": "cppvsdbg",
         "request": "launch",
         "program": "${workspaceFolder}/target/debug/loadwhat.exe",
-        "args": ["run", "c:/windows/notepad.exe"],
+        "args": [
+            "run", 
+            "../tests/fixtures/msvc/out/Release/x64/host_dynamic_loadlibrary_name.exe"
+        ],
         "stopAtEntry": false,
         "cwd": "${fileDirname}",
         "environment": [],
