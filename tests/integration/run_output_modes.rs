@@ -12,10 +12,12 @@ fn token_lines(stdout: &str) -> Vec<&str> {
                     || line.starts_with("DYNAMIC_")
                     || line.starts_with("SEARCH_")
                     || line.starts_with("RUN_")
+                    || line.starts_with("RUNTIME_")
                     || line.starts_with("FIRST_BREAK")
                     || line.starts_with("SUMMARY")
                     || line.starts_with("SUCCESS")
-                    || line.starts_with("NOTE "))
+                    || line.starts_with("NOTE ")
+                    || line.starts_with("DEBUG_STRING"))
         })
         .collect()
 }
@@ -209,5 +211,74 @@ fn run_trace_emits_detailed_lines() {
             && result.stdout.contains("SEARCH_PATH"),
         "expected detailed trace lines.\n{}",
         result.stdout
+    );
+}
+
+#[test]
+fn imports_emits_static_only_tokens_and_summary() {
+    let Some(paths) = harness::paths::from_env() else {
+        return;
+    };
+
+    let case = harness::case::TestCase::new(&paths, "imports_output_contract")
+        .expect("failed to initialize test case");
+    let app_dir = case.mkdir("app").expect("failed to create app directory");
+    let exe = case
+        .copy_fixture(
+            harness::fixture::HOST_STATIC_IMPORTS_A_EXE,
+            "app\\host_static_imports_a.exe",
+        )
+        .expect("failed to copy host fixture");
+    case.copy_fixture_as(harness::fixture::DLL_LWTEST_A, "app", "lwtest_a.dll")
+        .expect("failed to copy app lwtest_a.dll");
+    case.copy_fixture_as(harness::fixture::DLL_LWTEST_B, "app", "lwtest_b.dll")
+        .expect("failed to copy app lwtest_b.dll");
+
+    let args = vec![
+        OsString::from("imports"),
+        harness::case::os(&exe),
+        OsString::from("--cwd"),
+        harness::case::os(&app_dir),
+    ];
+    let result =
+        harness::run_loadwhat::run_public(&paths, case.root(), &args, Duration::from_secs(20))
+            .expect("failed to run loadwhat");
+
+    harness::assert::assert_not_timed_out(&result);
+    harness::assert::assert_exit_code(&result, 0);
+
+    let lines = token_lines(&result.stdout);
+    assert!(
+        lines.iter().any(|line| line.starts_with("STATIC_START "))
+            && lines.iter().any(|line| line.starts_with("STATIC_IMPORT "))
+            && lines.iter().any(|line| line.starts_with("SEARCH_ORDER "))
+            && lines.iter().any(|line| line.starts_with("SUMMARY ")),
+        "expected static/search imports output.\n{}",
+        result.stdout
+    );
+    assert!(
+        !lines.iter().any(|line| {
+            line.starts_with("RUN_START ")
+                || line.starts_with("RUNTIME_LOADED ")
+                || line.starts_with("DEBUG_STRING ")
+                || line.starts_with("RUN_END ")
+                || line.starts_with("FIRST_BREAK ")
+        }),
+        "imports should remain offline/static-only.\n{}",
+        result.stdout
+    );
+    let summary = lines
+        .iter()
+        .copied()
+        .find(|line| line.starts_with("SUMMARY "))
+        .expect("missing SUMMARY");
+    assert!(
+        summary.contains("first_break=false")
+            && summary.contains("static_missing=0")
+            && summary.contains("static_bad_image=0")
+            && summary.contains("dynamic_missing=0")
+            && summary.contains("runtime_loaded=0"),
+        "unexpected imports SUMMARY schema.\n{}",
+        summary
     );
 }

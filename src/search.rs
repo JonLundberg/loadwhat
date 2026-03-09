@@ -1,3 +1,5 @@
+// Reconstructs the fixed v1 DLL search order and classifies search candidates deterministically.
+
 use std::collections::HashSet;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};

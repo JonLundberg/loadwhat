@@ -31,6 +31,7 @@ target\release\loadwhat.exe
 - `-v`/`--verbose` implies `--trace` and adds runtime timeline tokens:
   - `RUN_START`, `RUNTIME_LOADED`, `DEBUG_STRING`, `RUN_END`
   - plus full static/search/summary tokens
+  - verbose `SUMMARY` uses explicit counters: `first_break`, `static_missing`, `static_bad_image`, `dynamic_missing`, `runtime_loaded`, `com_issues`
 
 `run` Phase B performs direct import diagnosis and an always-on recursive missing-dependency walk (transitive missing detection).
 

@@ -180,13 +180,24 @@ fn dynamic_verbose_mode_keeps_diagnosis_stable() {
         "{}",
         dynamic
     );
+    let summary = find_token_line(&lines, "SUMMARY ").expect("missing SUMMARY");
     assert!(
         find_token_line(&lines, "RUN_START ").is_some()
+            && find_token_line(&lines, "RUNTIME_LOADED ").is_some()
             && find_token_line(&lines, "RUN_END ").is_some()
             && find_token_line(&lines, "DEBUG_STRING ").is_some()
-            && find_token_line(&lines, "SUMMARY ").is_some(),
+            && !result.stdout.lines().any(|line| line.trim().starts_with("LOAD ")),
         "expected verbose runtime detail.\n{}",
         result.stdout
+    );
+    assert!(
+        summary.contains("first_break=true")
+            && summary.contains("static_missing=0")
+            && summary.contains("static_bad_image=0")
+            && summary.contains("dynamic_missing=1")
+            && !summary.contains("missing_static="),
+        "unexpected verbose SUMMARY fields.\n{}",
+        summary
     );
 }
 

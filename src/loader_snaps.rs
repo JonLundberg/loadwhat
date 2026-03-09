@@ -1,3 +1,5 @@
+// Enables and restores loader-snaps using the PEB-first and IFEO-fallback v1 flow.
+
 use std::ffi::OsStr;
 use std::mem;
 

@@ -1,3 +1,5 @@
+// Declares the Win32 and NT FFI surface used by the rest of the tool.
+
 use std::ffi::c_void;
 use std::ffi::{OsStr, OsString};
 use std::mem;

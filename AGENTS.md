@@ -34,6 +34,23 @@ Do not implement roadmap items unless explicitly requested.
 - Recursive missing-dependency walk is part of v1 spec; implement deterministically per spec.
 - Output must be line-oriented tokens per spec (`TOKEN key=value ...`).
 
+## Output contract discipline
+
+- Preserve the documented public token families and output modes.
+- `run` summary mode emits exactly one line:
+  - `STATIC_MISSING`
+  - `STATIC_BAD_IMAGE`
+  - `DYNAMIC_MISSING`
+  - or `SUCCESS status=0`
+- `--trace` emits search/diagnosis trace tokens.
+- `--verbose` adds runtime timeline tokens such as:
+  - `RUN_START`
+  - `RUNTIME_LOADED`
+  - `DEBUG_STRING`
+  - `RUN_END`
+- Do not replace `RUNTIME_LOADED` with a new `LOAD` token.
+- Do not introduce new public token families unless `docs/loadwhat_spec_v1.md` is updated first.
+
 ## Truthfulness requirements
 
 Do not:
@@ -123,6 +140,18 @@ Do not mix unrelated feature work in one change.
 - Primary workflow: `cargo xtask test` (Windows).
 - Ensure tests validate token shape/contract and deterministic behavior.
 - Keep fixture-based tests isolated and reproducible.
+- Preserve harness behavior under `target/loadwhat-tests/`.
+- Treat `LWTEST:*` lines as internal harness output, not part of the public token contract.
+
+## Change discipline
+
+When changing behavior:
+
+1. update code
+2. update tests
+3. update spec/examples if the public contract changed
+
+Do not silently change code behavior while leaving the docs or test contract behind.
 
 ## Completion checklist
 

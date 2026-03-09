@@ -1,3 +1,5 @@
+// Runs the Windows debug loop and converts raw debug events into runtime observations.
+
 use std::ffi::{OsStr, OsString};
 use std::mem;
 use std::os::windows::ffi::OsStringExt;

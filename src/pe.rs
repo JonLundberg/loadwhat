@@ -1,3 +1,5 @@
+// Parses PE import tables and performs lightweight PE validity checks for search results.
+
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;

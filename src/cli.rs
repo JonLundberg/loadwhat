@@ -1,3 +1,5 @@
+// Parses the public CLI shape and preserves the documented command contract.
+
 use std::env;
 use std::ffi::OsString;
 use std::path::PathBuf;

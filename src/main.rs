@@ -33,7 +33,13 @@ use cli::{Command, ImportsOptions, RunOptions};
 #[cfg(windows)]
 use debug_run::{LoadedModule, RunEndKind, RunError, RunOutcome, RuntimeEvent};
 #[cfg(windows)]
-use emit::{emit, field, hex_u32, hex_usize, quote};
+use emit::{
+    emit, field, hex_u32, hex_usize, quote, summary_fields, SummaryCounts,
+    TOKEN_DEBUG_STRING, TOKEN_DYNAMIC_MISSING, TOKEN_FIRST_BREAK, TOKEN_NOTE, TOKEN_RUN_END,
+    TOKEN_RUN_START, TOKEN_RUNTIME_LOADED, TOKEN_SEARCH_ORDER, TOKEN_SEARCH_PATH,
+    TOKEN_STATIC_BAD_IMAGE, TOKEN_STATIC_END, TOKEN_STATIC_FOUND, TOKEN_STATIC_IMPORT,
+    TOKEN_STATIC_MISSING, TOKEN_STATIC_START, TOKEN_SUCCESS, TOKEN_SUMMARY,
+};
 #[cfg(windows)]
 use loader_snaps::{LoaderSnapsGuard, PebEnableInfo};
 #[cfg(windows)]
@@ -95,7 +101,7 @@ fn run_command(opts: RunOptions) -> i32 {
                     Err(code) => {
                         if trace_mode {
                             emit(
-                                "NOTE",
+                                TOKEN_NOTE,
                                 &vec![
                                     field("topic", quote("loader-snaps")),
                                     field("detail", quote("enable-failed")),
@@ -110,7 +116,7 @@ fn run_command(opts: RunOptions) -> i32 {
                 if trace_mode && opts.verbose {
                     emit_loader_snaps_peb_note(peb_info);
                     emit(
-                        "NOTE",
+                        TOKEN_NOTE,
                         &vec![
                             field("topic", quote("loader-snaps")),
                             field("detail", quote("peb-enable-failed")),
@@ -133,7 +139,7 @@ fn run_command(opts: RunOptions) -> i32 {
             Err(RunError::UnsupportedWow64Target) => {
                 if trace_mode {
                     emit(
-                        "NOTE",
+                        TOKEN_NOTE,
                         &vec![
                             field("topic", quote("loader-snaps")),
                             field("detail", quote("wow64-target-unsupported")),
@@ -165,7 +171,7 @@ fn run_command(opts: RunOptions) -> i32 {
         if let Err(code) = guard.restore() {
             if trace_mode {
                 emit(
-                    "NOTE",
+                    TOKEN_NOTE,
                     &vec![
                         field("topic", quote("loader-snaps")),
                         field("detail", quote("restore-failed")),
@@ -189,7 +195,7 @@ fn run_command(opts: RunOptions) -> i32 {
         Err(RunError::UnsupportedWow64Target) => {
             if trace_mode {
                 emit(
-                    "NOTE",
+                    TOKEN_NOTE,
                     &vec![
                         field("topic", quote("loader-snaps")),
                         field("detail", quote("wow64-target-unsupported")),
@@ -237,7 +243,9 @@ fn run_command(opts: RunOptions) -> i32 {
     }
 
     let mut first_break = false;
-    let mut missing_or_bad = 0usize;
+    let mut static_missing_count = 0usize;
+    let mut static_bad_image_count = 0usize;
+    let mut dynamic_missing_count = 0usize;
     let mut detected_missing_name: Option<String> = None;
     let mut dynamic_failure_seen = false;
     let mut summary_line_emitted = false;
@@ -272,7 +280,8 @@ fn run_command(opts: RunOptions) -> i32 {
         );
         match diag {
             Ok(report) => {
-                missing_or_bad = report.missing_or_bad;
+                static_missing_count = report.missing_count;
+                static_bad_image_count = report.bad_image_count;
                 if let Some(issue) = &report.first_issue {
                     first_break = true;
                     if detected_missing_name.is_none() {
@@ -291,12 +300,12 @@ fn run_command(opts: RunOptions) -> i32 {
                                     fields.push(field("via", quote(&issue.via)));
                                     fields.push(field("depth", issue.depth.to_string()));
                                 }
-                                emit("STATIC_MISSING", &fields);
+                                emit(TOKEN_STATIC_MISSING, &fields);
                                 summary_line_emitted = true;
                             }
                             ResolutionKind::BadImage => {
                                 emit(
-                                    "STATIC_BAD_IMAGE",
+                                    TOKEN_STATIC_BAD_IMAGE,
                                     &vec![
                                         field("module", quote(&issue.module)),
                                         field("dll", quote(&issue.dll)),
@@ -309,7 +318,7 @@ fn run_command(opts: RunOptions) -> i32 {
                         }
                     } else if opts.verbose {
                         emit(
-                            "FIRST_BREAK",
+                            TOKEN_FIRST_BREAK,
                             &vec![
                                 field(
                                     "observed_exit_kind",
@@ -333,7 +342,7 @@ fn run_command(opts: RunOptions) -> i32 {
                         );
                     } else {
                         emit(
-                            "SEARCH_ORDER",
+                            TOKEN_SEARCH_ORDER,
                             &vec![field("safedll", if report.safedll { "1" } else { "0" })],
                         );
                         match issue.kind {
@@ -347,11 +356,11 @@ fn run_command(opts: RunOptions) -> i32 {
                                     fields.push(field("via", quote(&issue.via)));
                                     fields.push(field("depth", issue.depth.to_string()));
                                 }
-                                emit("STATIC_MISSING", &fields);
+                                emit(TOKEN_STATIC_MISSING, &fields);
                             }
                             ResolutionKind::BadImage => {
                                 emit(
-                                    "STATIC_BAD_IMAGE",
+                                    TOKEN_STATIC_BAD_IMAGE,
                                     &vec![
                                         field("module", quote(&issue.module)),
                                         field("dll", quote(&issue.dll)),
@@ -363,7 +372,7 @@ fn run_command(opts: RunOptions) -> i32 {
                         }
                         for candidate in &issue.candidates {
                             emit(
-                                "SEARCH_PATH",
+                                TOKEN_SEARCH_PATH,
                                 &vec![
                                     field("dll", quote(&issue.dll)),
                                     field("order", candidate.order.to_string()),
@@ -378,7 +387,7 @@ fn run_command(opts: RunOptions) -> i32 {
             Err(err) => {
                 if trace_mode && opts.verbose {
                     emit(
-                        "NOTE",
+                        TOKEN_NOTE,
                         &vec![field(
                             "detail",
                             quote(&format!("static diagnosis failed: {err}")),
@@ -392,10 +401,11 @@ fn run_command(opts: RunOptions) -> i32 {
     }
 
     // Dynamic (LoadLibrary) failures are observed via loader-snaps debug strings.
-    if opts.loader_snaps && missing_or_bad == 0 {
+    if opts.loader_snaps && static_missing_count + static_bad_image_count == 0 {
         let exe_dir = exe_path.parent().unwrap_or_else(|| Path::new("."));
         if let Some(dm) = detect_dynamic_missing_from_debug_strings(&outcome, exe_dir, &cwd) {
             dynamic_failure_seen = true;
+            first_break = true;
             if test_mode {
                 if dm.dll.starts_with("lwtest_") {
                     detected_missing_name = Some(dm.dll.clone());
@@ -408,14 +418,14 @@ fn run_command(opts: RunOptions) -> i32 {
                 if let Some(st) = dm.status {
                     fields.push(field("status", hex_u32(st)));
                 }
-                emit("DYNAMIC_MISSING", &fields);
-                missing_or_bad = 1;
+                emit(TOKEN_DYNAMIC_MISSING, &fields);
+                dynamic_missing_count = 1;
                 summary_line_emitted = true;
             } else {
                 let app_dir = exe_path.parent().unwrap_or_else(|| Path::new("."));
                 if let Ok(context) = dynamic_trace_search_context(app_dir, &cwd) {
                     emit(
-                        "SEARCH_ORDER",
+                        TOKEN_SEARCH_ORDER,
                         &vec![field("safedll", if context.safedll { "1" } else { "0" })],
                     );
 
@@ -426,12 +436,12 @@ fn run_command(opts: RunOptions) -> i32 {
                     if let Some(st) = dm.status {
                         fields.push(field("status", hex_u32(st)));
                     }
-                    emit("DYNAMIC_MISSING", &fields);
+                    emit(TOKEN_DYNAMIC_MISSING, &fields);
 
                     let resolution = search::resolve_dll(&dm.dll, &context);
                     for candidate in &resolution.candidates {
                         emit(
-                            "SEARCH_PATH",
+                            TOKEN_SEARCH_PATH,
                             &vec![
                                 field("dll", quote(&dm.dll)),
                                 field("order", candidate.order.to_string()),
@@ -440,7 +450,7 @@ fn run_command(opts: RunOptions) -> i32 {
                             ],
                         );
                     }
-                    missing_or_bad = 1;
+                    dynamic_missing_count = 1;
                 } else {
                     let mut fields = vec![
                         field("dll", quote(&dm.dll)),
@@ -449,8 +459,8 @@ fn run_command(opts: RunOptions) -> i32 {
                     if let Some(st) = dm.status {
                         fields.push(field("status", hex_u32(st)));
                     }
-                    emit("DYNAMIC_MISSING", &fields);
-                    missing_or_bad = 1;
+                    emit(TOKEN_DYNAMIC_MISSING, &fields);
+                    dynamic_missing_count = 1;
                 }
             }
         }
@@ -467,7 +477,7 @@ fn run_command(opts: RunOptions) -> i32 {
             outcome.exit_code,
         );
         let load_failure_detected = detected_missing_name.is_some()
-            || missing_or_bad > 0
+            || static_missing_count + static_bad_image_count + dynamic_missing_count > 0
             || dynamic_failure_seen
             || loader_exception.is_some();
         return test_mode_exit_code(&outcome, load_failure_detected);
@@ -475,17 +485,21 @@ fn run_command(opts: RunOptions) -> i32 {
 
     if trace_mode && opts.verbose {
         emit(
-            "SUMMARY",
-            &vec![
-                field("first_break", if first_break { "true" } else { "false" }),
-                field("missing_static", missing_or_bad.to_string()),
-                field("runtime_loaded", outcome.loaded_modules.len().to_string()),
-                field("com_issues", "0"),
-            ],
+            TOKEN_SUMMARY,
+            &summary_fields(
+                first_break,
+                SummaryCounts {
+                    static_missing: static_missing_count,
+                    static_bad_image: static_bad_image_count,
+                    dynamic_missing: dynamic_missing_count,
+                    runtime_loaded: outcome.loaded_modules.len(),
+                    com_issues: 0,
+                },
+            ),
         );
     }
 
-    let code = if missing_or_bad > 0 {
+    let code = if static_missing_count + static_bad_image_count + dynamic_missing_count > 0 {
         10
     } else {
         match outcome.end_kind {
@@ -496,7 +510,7 @@ fn run_command(opts: RunOptions) -> i32 {
     };
 
     if summary_mode && !summary_line_emitted && code == 0 {
-        emit("SUCCESS", &vec![field("status", "0")]);
+        emit(TOKEN_SUCCESS, &vec![field("status", "0")]);
     }
 
     code
@@ -528,15 +542,19 @@ fn imports_command(opts: ImportsOptions) -> i32 {
     match diag {
         Ok(report) => {
             emit(
-                "SUMMARY",
-                &vec![
-                    field("first_break", "false"),
-                    field("missing_static", report.missing_or_bad.to_string()),
-                    field("runtime_loaded", "0"),
-                    field("com_issues", "0"),
-                ],
+                TOKEN_SUMMARY,
+                &summary_fields(
+                    false,
+                    SummaryCounts {
+                        static_missing: report.missing_count,
+                        static_bad_image: report.bad_image_count,
+                        dynamic_missing: 0,
+                        runtime_loaded: 0,
+                        com_issues: 0,
+                    },
+                ),
             );
-            if report.missing_or_bad > 0 {
+            if report.missing_count + report.bad_image_count > 0 {
                 10
             } else {
                 0
@@ -552,7 +570,7 @@ fn imports_command(opts: ImportsOptions) -> i32 {
 #[cfg(windows)]
 fn emit_run_events(exe_path: &Path, cwd: &Path, outcome: &RunOutcome) {
     emit(
-        "RUN_START",
+        TOKEN_RUN_START,
         &vec![
             field("exe", quote(&display_path(exe_path))),
             field("cwd", quote(&display_path(cwd))),
@@ -564,7 +582,7 @@ fn emit_run_events(exe_path: &Path, cwd: &Path, outcome: &RunOutcome) {
         match event {
             RuntimeEvent::RuntimeLoaded(module) => {
                 emit(
-                    "RUNTIME_LOADED",
+                    TOKEN_RUNTIME_LOADED,
                     &vec![
                         field("pid", outcome.pid.to_string()),
                         field("dll", quote(&module.dll_name)),
@@ -584,7 +602,7 @@ fn emit_run_events(exe_path: &Path, cwd: &Path, outcome: &RunOutcome) {
             }
             RuntimeEvent::DebugString(debug) => {
                 emit(
-                    "DEBUG_STRING",
+                    TOKEN_DEBUG_STRING,
                     &vec![
                         field("pid", debug.pid.to_string()),
                         field("tid", debug.tid.to_string()),
@@ -607,7 +625,7 @@ fn emit_run_events(exe_path: &Path, cwd: &Path, outcome: &RunOutcome) {
         .map(hex_u32)
         .unwrap_or_else(|| "0x00000000".to_string());
     emit(
-        "RUN_END",
+        TOKEN_RUN_END,
         &vec![
             field("pid", outcome.pid.to_string()),
             field("exit_kind", quote(exit_kind)),
@@ -623,7 +641,7 @@ fn emit_loader_snaps_peb_note(info: PebEnableInfo) {
         None => "unknown".to_string(),
     };
     emit(
-        "NOTE",
+        TOKEN_NOTE,
         &vec![
             field("topic", quote("loader-snaps")),
             field("detail", quote("peb-ntglobalflag")),
@@ -649,7 +667,8 @@ struct FirstIssue {
 
 #[cfg(windows)]
 struct StaticReport {
-    missing_or_bad: usize,
+    missing_count: usize,
+    bad_image_count: usize,
     first_issue: Option<FirstIssue>,
     safedll: bool,
 }
@@ -689,19 +708,20 @@ fn diagnose_static_imports(
 
     if matches!(emit_mode, StaticEmitMode::Full) {
         emit(
-            "STATIC_START",
+            TOKEN_STATIC_START,
             &vec![
                 field("module", quote(&display_path(module_path))),
                 field("scope", quote("direct-and-recursive-imports")),
             ],
         );
         emit(
-            "SEARCH_ORDER",
+            TOKEN_SEARCH_ORDER,
             &vec![field("safedll", if context.safedll { "1" } else { "0" })],
         );
     }
 
-    let mut missing = 0usize;
+    let mut missing_count = 0usize;
+    let mut bad_image_count = 0usize;
     let mut first_issue = None::<FirstIssue>;
     let mut visited = HashSet::new();
     let mut queue = VecDeque::new();
@@ -734,7 +754,7 @@ fn diagnose_static_imports(
 
             if matches!(emit_mode, StaticEmitMode::Full) {
                 emit(
-                    "STATIC_IMPORT",
+                    TOKEN_STATIC_IMPORT,
                     &vec![
                         field("module", quote(&node.module_name)),
                         field("needs", quote(&dll)),
@@ -745,7 +765,7 @@ fn diagnose_static_imports(
             if node.depth == 0 && runtime_loaded.contains(&dll) {
                 if matches!(emit_mode, StaticEmitMode::Full) {
                     emit(
-                        "STATIC_FOUND",
+                        TOKEN_STATIC_FOUND,
                         &vec![
                             field("module", quote(&node.module_name)),
                             field("dll", quote(&dll)),
@@ -775,7 +795,7 @@ fn diagnose_static_imports(
             if matches!(emit_mode, StaticEmitMode::Full) {
                 for candidate in &resolution.candidates {
                     emit(
-                        "SEARCH_PATH",
+                        TOKEN_SEARCH_PATH,
                         &vec![
                             field("dll", quote(&dll)),
                             field("order", candidate.order.to_string()),
@@ -790,7 +810,7 @@ fn diagnose_static_imports(
                 ResolutionKind::Found => {
                     if matches!(emit_mode, StaticEmitMode::Full) {
                         emit(
-                            "STATIC_FOUND",
+                            TOKEN_STATIC_FOUND,
                             &vec![
                                 field("module", quote(&node.module_name)),
                                 field("dll", quote(&dll)),
@@ -820,7 +840,7 @@ fn diagnose_static_imports(
                     }
                 }
                 ResolutionKind::Missing => {
-                    missing += 1;
+                    missing_count += 1;
                     let issue = FirstIssue {
                         module: root_module_name.clone(),
                         via: node.module_name.clone(),
@@ -842,7 +862,7 @@ fn diagnose_static_imports(
                             fields.push(field("via", quote(&node.module_name)));
                             fields.push(field("depth", (node.depth + 1).to_string()));
                         }
-                        emit("STATIC_MISSING", &fields);
+                        emit(TOKEN_STATIC_MISSING, &fields);
                     }
 
                     if matches!(
@@ -853,7 +873,7 @@ fn diagnose_static_imports(
                     }
                 }
                 ResolutionKind::BadImage => {
-                    missing += 1;
+                    bad_image_count += 1;
                     let issue = FirstIssue {
                         module: root_module_name.clone(),
                         via: node.module_name.clone(),
@@ -867,7 +887,7 @@ fn diagnose_static_imports(
 
                     if matches!(emit_mode, StaticEmitMode::Full) {
                         emit(
-                            "STATIC_BAD_IMAGE",
+                            TOKEN_STATIC_BAD_IMAGE,
                             &vec![
                                 field("module", quote(&node.module_name)),
                                 field("dll", quote(&dll)),
@@ -889,20 +909,21 @@ fn diagnose_static_imports(
 
     if matches!(emit_mode, StaticEmitMode::Full) {
         emit(
-            "NOTE",
+            TOKEN_NOTE,
             &vec![field(
                 "detail",
                 quote("KnownDLLs/SxS/AddDllDirectory not modeled in v1"),
             )],
         );
         emit(
-            "STATIC_END",
+            TOKEN_STATIC_END,
             &vec![field("module", quote(&display_path(module_path)))],
         );
     }
 
     Ok(StaticReport {
-        missing_or_bad: missing,
+        missing_count,
+        bad_image_count,
         first_issue,
         safedll: context.safedll,
     })
