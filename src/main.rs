@@ -413,9 +413,7 @@ fn run_command(opts: RunOptions) -> i32 {
                 summary_line_emitted = true;
             } else {
                 let app_dir = exe_path.parent().unwrap_or_else(|| Path::new("."));
-                if let Ok(context) =
-                    SearchContext::from_environment(app_dir, &cwd, env_path_override(&[]))
-                {
+                if let Ok(context) = dynamic_trace_search_context(app_dir, &cwd) {
                     emit(
                         "SEARCH_ORDER",
                         &vec![field("safedll", if context.safedll { "1" } else { "0" })],
@@ -1599,6 +1597,20 @@ fn is_loader_related_code(code: u32) -> bool {
         code,
         0xC0000135 | 0xC0000139 | 0xC000007B | 0xC0000142 | 0xC000001D | 0x8007007E | 0x800700C1
     )
+}
+
+#[cfg(windows)]
+fn dynamic_trace_search_context(app_dir: &Path, cwd: &Path) -> Result<SearchContext, String> {
+    // Keep this hook scoped to dynamic trace emission so static diagnosis stays
+    // on the normal production path.
+    if env::var("LOADWHAT_TEST_FORCE_DYNAMIC_SEARCH_CONTEXT_FAIL")
+        .map(|value| value.trim() == "1")
+        .unwrap_or(false)
+    {
+        return Err("forced dynamic search context failure".to_string());
+    }
+
+    SearchContext::from_environment(app_dir, cwd, env_path_override(&[]))
 }
 
 #[cfg(windows)]

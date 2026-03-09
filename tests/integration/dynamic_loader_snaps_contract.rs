@@ -503,3 +503,61 @@ fn dynamic_multiple_failures_choose_first_unresolved_app_failure() {
         lines[0]
     );
 }
+
+#[test]
+fn dynamic_trace_without_search_context_still_emits_missing() {
+    let Some(paths) = harness::paths::from_env() else {
+        return;
+    };
+
+    let case = harness::case::TestCase::new(&paths, "dynamic_no_search_context")
+        .expect("failed to initialize test case");
+    let app_dir = case.mkdir("app").expect("failed to create app directory");
+    let exe = case
+        .copy_fixture(
+            harness::fixture::HOST_DYNAMIC_LOADLIBRARY_NAME_EXE,
+            "app\\host_dynamic_loadlibrary_name.exe",
+        )
+        .expect("failed to copy host fixture");
+
+    let args = vec![
+        OsString::from("run"),
+        harness::case::os(&exe),
+        OsString::from("--cwd"),
+        harness::case::os(&app_dir),
+        OsString::from("--loader-snaps"),
+        OsString::from("--trace"),
+    ];
+    let result = harness::run_loadwhat::run_public_with_env(
+        &paths,
+        case.root(),
+        &args,
+        Duration::from_secs(20),
+        &[("LOADWHAT_TEST_FORCE_DYNAMIC_SEARCH_CONTEXT_FAIL", "1")],
+    )
+    .expect("failed to run loadwhat");
+
+    harness::assert::assert_not_timed_out(&result);
+    harness::assert::assert_exit_code(&result, 10);
+
+    let lines = token_lines(&result.stdout);
+    assert_eq!(
+        lines.len(),
+        1,
+        "expected one diagnostic line when search context is unavailable.\n{}",
+        result.stdout
+    );
+    assert!(
+        lines[0].starts_with("DYNAMIC_MISSING ")
+            && lines[0].contains(r#"dll="lwtest_a.dll""#)
+            && lines[0].contains(r#"reason="NOT_FOUND""#),
+        "unexpected no-search-context diagnosis: {}",
+        lines[0]
+    );
+    assert!(
+        find_token_line(&lines, "SEARCH_ORDER ").is_none()
+            && find_token_line(&lines, "SEARCH_PATH ").is_none(),
+        "trace mode should omit search evidence when search context cannot be built.\n{}",
+        result.stdout
+    );
+}

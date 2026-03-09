@@ -21,7 +21,7 @@ pub fn run(
     args: &[OsString],
     timeout: Duration,
 ) -> Result<RunResult, String> {
-    run_with_test_mode(paths, current_dir, args, timeout, true)
+    run_with_test_mode(paths, current_dir, args, timeout, true, &[])
 }
 
 pub fn run_public(
@@ -30,7 +30,17 @@ pub fn run_public(
     args: &[OsString],
     timeout: Duration,
 ) -> Result<RunResult, String> {
-    run_with_test_mode(paths, current_dir, args, timeout, false)
+    run_with_test_mode(paths, current_dir, args, timeout, false, &[])
+}
+
+pub fn run_public_with_env(
+    paths: &HarnessPaths,
+    current_dir: &Path,
+    args: &[OsString],
+    timeout: Duration,
+    env_pairs: &[(&str, &str)],
+) -> Result<RunResult, String> {
+    run_with_test_mode(paths, current_dir, args, timeout, false, env_pairs)
 }
 
 fn run_with_test_mode(
@@ -39,6 +49,7 @@ fn run_with_test_mode(
     args: &[OsString],
     timeout: Duration,
     enable_test_mode: bool,
+    env_pairs: &[(&str, &str)],
 ) -> Result<RunResult, String> {
     let mut command = Command::new(&paths.loadwhat_bin);
     command
@@ -48,6 +59,9 @@ fn run_with_test_mode(
         .stderr(Stdio::piped());
     if !enable_test_mode {
         command.env_remove("LOADWHAT_TEST_MODE");
+    }
+    for (key, value) in env_pairs {
+        command.env(key, value);
     }
 
     let mut child = command
