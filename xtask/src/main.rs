@@ -85,6 +85,7 @@ fn build_fixtures(repo_root: &Path, fixture_bin_root: &Path) -> Result<(), Strin
         ("1", "lwtest_a_v1"),
         ("2", "lwtest_a_v2"),
         ("3", "lwtest_a_initfail"),
+        ("4", "lwtest_a_nested"),
     ] {
         let variant_prop = format!(
             "/p:Configuration=Release;Platform=x64;LWTEST_OUTDIR={};LWTEST_VARIANT={variant};TargetName={target_name};BuildProjectReferences=false",

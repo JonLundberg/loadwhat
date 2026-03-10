@@ -216,3 +216,110 @@ fn dedup_case_insensitive(paths: Vec<PathBuf>) -> Vec<PathBuf> {
 fn normalize_cmp(path: &Path) -> String {
     path.as_os_str().to_string_lossy().to_ascii_lowercase()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::SearchContext;
+    use std::path::PathBuf;
+
+    fn ordered_root_strings(context: SearchContext) -> Vec<String> {
+        context
+            .ordered_roots()
+            .into_iter()
+            .map(|path| path.to_string_lossy().to_string())
+            .collect()
+    }
+
+    fn sample_context(
+        safedll: bool,
+        system16_dir: Option<&str>,
+        path_dirs: &[&str],
+    ) -> SearchContext {
+        SearchContext {
+            app_dir: PathBuf::from(r"C:\app"),
+            cwd: PathBuf::from(r"C:\cwd"),
+            path_dirs: path_dirs.iter().map(PathBuf::from).collect(),
+            safedll,
+            system_dir: PathBuf::from(r"C:\Windows\System32"),
+            windows_dir: PathBuf::from(r"C:\Windows"),
+            system16_dir: system16_dir.map(PathBuf::from),
+        }
+    }
+
+    #[test]
+    fn search_order_safe_mode_enabled_places_cwd_after_windows() {
+        let got = ordered_root_strings(sample_context(
+            true,
+            Some(r"C:\Windows\System"),
+            &[r"C:\path1"],
+        ));
+        assert_eq!(
+            got,
+            vec![
+                r"C:\app",
+                r"C:\Windows\System32",
+                r"C:\Windows\System",
+                r"C:\Windows",
+                r"C:\cwd",
+                r"C:\path1",
+            ]
+        );
+    }
+
+    #[test]
+    fn search_order_safe_mode_disabled_places_cwd_after_app_dir() {
+        let got = ordered_root_strings(sample_context(
+            false,
+            Some(r"C:\Windows\System"),
+            &[r"C:\path1"],
+        ));
+        assert_eq!(
+            got,
+            vec![
+                r"C:\app",
+                r"C:\cwd",
+                r"C:\Windows\System32",
+                r"C:\Windows\System",
+                r"C:\Windows",
+                r"C:\path1",
+            ]
+        );
+    }
+
+    #[test]
+    fn search_order_skips_missing_system16_dir() {
+        let got = ordered_root_strings(sample_context(false, None, &[r"C:\path1"]));
+        assert_eq!(
+            got,
+            vec![
+                r"C:\app",
+                r"C:\cwd",
+                r"C:\Windows\System32",
+                r"C:\Windows",
+                r"C:\path1",
+            ]
+        );
+    }
+
+    #[test]
+    fn search_order_preserves_path_entry_order() {
+        let got = ordered_root_strings(sample_context(
+            true,
+            Some(r"C:\Windows\System"),
+            &[r"C:\path1", r"C:\path2", r"C:\path3"],
+        ));
+        assert_eq!(
+            got,
+            vec![
+                r"C:\app",
+                r"C:\Windows\System32",
+                r"C:\Windows\System",
+                r"C:\Windows",
+                r"C:\cwd",
+                r"C:\path1",
+                r"C:\path2",
+                r"C:\path3",
+            ]
+        );
+    }
+}

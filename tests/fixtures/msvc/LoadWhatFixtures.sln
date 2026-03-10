@@ -18,6 +18,8 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "host_dynamic_loadlibrary_fu
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "host_dynamic_loadlibrary_sequence", "host_dynamic_loadlibrary_sequence\host_dynamic_loadlibrary_sequence.vcxproj", "{88888888-8888-8888-8888-888888888888}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "host_dynamic_loadlibrary_nested", "host_dynamic_loadlibrary_nested\host_dynamic_loadlibrary_nested.vcxproj", "{99999999-9999-9999-9999-999999999999}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Release|x64 = Release|x64
@@ -39,6 +41,8 @@ Global
 		{77777777-7777-7777-7777-777777777777}.Release|x64.Build.0 = Release|x64
 		{88888888-8888-8888-8888-888888888888}.Release|x64.ActiveCfg = Release|x64
 		{88888888-8888-8888-8888-888888888888}.Release|x64.Build.0 = Release|x64
+		{99999999-9999-9999-9999-999999999999}.Release|x64.ActiveCfg = Release|x64
+		{99999999-9999-9999-9999-999999999999}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

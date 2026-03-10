@@ -24,6 +24,16 @@ pub fn run(
     run_with_test_mode(paths, current_dir, args, timeout, true, &[])
 }
 
+pub fn run_with_env(
+    paths: &HarnessPaths,
+    current_dir: &Path,
+    args: &[OsString],
+    timeout: Duration,
+    env_pairs: &[(&str, &str)],
+) -> Result<RunResult, String> {
+    run_with_test_mode(paths, current_dir, args, timeout, true, env_pairs)
+}
+
 pub fn run_public(
     paths: &HarnessPaths,
     current_dir: &Path,

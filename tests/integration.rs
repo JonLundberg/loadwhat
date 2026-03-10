@@ -9,8 +9,14 @@ mod dynamic_loadlibrary_fullpath;
 mod dynamic_loadlibrary_name;
 #[path = "integration/dynamic_missing_direct.rs"]
 mod dynamic_missing_direct;
+#[path = "integration/dynamic_multiple_candidates.rs"]
+mod dynamic_multiple_candidates;
+#[path = "integration/dynamic_nested_loadlibrary.rs"]
+mod dynamic_nested_loadlibrary;
 #[path = "integration/imports_transitive_missing.rs"]
 mod imports_transitive_missing;
+#[path = "integration/path_search_order.rs"]
+mod path_search_order;
 #[path = "integration/run_output_modes.rs"]
 mod run_output_modes;
 #[path = "integration/static_missing_direct.rs"]

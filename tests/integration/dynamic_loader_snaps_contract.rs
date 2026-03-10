@@ -186,7 +186,10 @@ fn dynamic_verbose_mode_keeps_diagnosis_stable() {
             && find_token_line(&lines, "RUNTIME_LOADED ").is_some()
             && find_token_line(&lines, "RUN_END ").is_some()
             && find_token_line(&lines, "DEBUG_STRING ").is_some()
-            && !result.stdout.lines().any(|line| line.trim().starts_with("LOAD ")),
+            && !result
+                .stdout
+                .lines()
+                .any(|line| line.trim().starts_with("LOAD ")),
         "expected verbose runtime detail.\n{}",
         result.stdout
     );

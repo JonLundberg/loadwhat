@@ -125,6 +125,8 @@ When inference succeeds:
 
 If search context cannot be built, emit only `DYNAMIC_MISSING`.
 
+When `SEARCH_ORDER` / `SEARCH_PATH` are emitted for a dynamic failure, they are produced from the fixed v1 search model in §4. They are diagnostic reconstructions, not a claim that every Windows loader mode or `LoadLibraryEx` variant used that exact runtime search order.
+
 #### Dynamic candidate selection rules
 
 Phase C is heuristic and is based on loader-snaps debug strings captured through `OUTPUT_DEBUG_STRING_EVENT`; it does not observe `LoadLibrary*` return values directly.
@@ -203,10 +205,20 @@ NOTE topic="loader-snaps" detail="restore-failed" code=0x...
 - If unreadable, emit `DEBUG_STRING ... text="UNREADABLE"` and continue.
 - Do not introduce a `SNAPS_*` token family.
 
-## 4) DLL search order (fixed in v1)
+## 4) DLL search order (fixed model in v1)
 
-For non-absolute DLL names, evaluate candidates in this order:
+Scope:
+- v1 models a deterministic subset of Windows DLL resolution for classic unpackaged desktop processes.
+- This model is used for:
+  - static import diagnosis in `run`
+  - the recursive missing-dependency walk in `run` and `imports`
+  - `SEARCH_ORDER` / `SEARCH_PATH` reconstruction for `DYNAMIC_MISSING` when Phase C can build search context
+- The v1 model applies to:
+  - non-absolute DLL basenames
+  - dependent DLL resolution for a module that was itself loaded by absolute path
+- If a root module is loaded by absolute path, its dependent DLLs are still resolved by basename using this same fixed v1 order.
 
+For non-absolute DLL basenames, evaluate candidates in this order:
 1. Application directory (target EXE directory)
 2. System directory (`GetSystemDirectoryW`)
 3. 16-bit system directory (`GetWindowsDirectoryW` + `\System`, if present)
@@ -215,23 +227,34 @@ For non-absolute DLL names, evaluate candidates in this order:
 6. PATH directories (in order)
 
 Safe DLL Search Mode:
-
 - Read `HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\SafeDllSearchMode`.
 - Missing value is treated as enabled.
 - `safedll=1`: CWD after Windows directory.
 - `safedll=0`: CWD after application directory.
 
+Additional v1 notes:
+- PATH evaluation uses the process PATH entries in order.
+- The per-application App Paths registry key is not part of DLL search resolution in v1.
+- If the computed 16-bit system directory path does not exist, skip it; do not fabricate a result for it.
+- Recursive static scanning ignores import names matching `api-ms-win-*` and `ext-ms-win-*` rather than reporting them as missing.
+
 Not modeled in v1:
-
+- DLL redirection
+- Loaded-module list reuse
 - KnownDLLs
-- SxS/loader redirection
-- `SetDefaultDllDirectories` / `AddDllDirectory`
+- SxS / manifest redirection
 - packaged app search rules
+- package dependency graph search
+- `LoadLibraryEx(..., LOAD_WITH_ALTERED_SEARCH_PATH)`
+- `SetDllDirectory`
+- `SetDefaultDllDirectories`
+- `AddDllDirectory`
+- `LOAD_LIBRARY_SEARCH_*` flag-based search order
+- relative-path `LoadLibrary*` semantics beyond the distinction between absolute-path inputs and basename inputs
 
-When relevant, emit:
-
+When one of the unmodeled behaviors above is likely relevant, emit:
 ```text
-NOTE detail="KnownDLLs/SxS/AddDllDirectory not modeled in v1"
+NOTE detail="KnownDLLs/SxS/SetDllDirectory/AddDllDirectory/alternate loader search not modeled in v1"
 ```
 
 ## 5) Output contract
@@ -261,7 +284,7 @@ Required token families in v1:
 
 ## 6) `imports` behavior
 
-`imports` runs direct import scanning for `<exe_or_dll>` and also performs the recursive missing-dependency walk described in §2, resolving imports with the same fixed search order and SafeDllSearchMode behavior and emitting static/search tokens.
+`imports` runs direct import scanning for `<exe_or_dll>` and also performs the recursive missing-dependency walk described in §2, resolving imports with the same fixed search order and SafeDllSearchMode behavior and emitting static/search tokens. The `imports` command uses the same fixed v1 model from §4 and does not attempt to emulate alternate Windows loader search modes.
 
 ## 7) Exit codes
 

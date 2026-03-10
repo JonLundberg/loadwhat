@@ -34,11 +34,11 @@ use cli::{Command, ImportsOptions, RunOptions};
 use debug_run::{LoadedModule, RunEndKind, RunError, RunOutcome, RuntimeEvent};
 #[cfg(windows)]
 use emit::{
-    emit, field, hex_u32, hex_usize, quote, summary_fields, SummaryCounts,
-    TOKEN_DEBUG_STRING, TOKEN_DYNAMIC_MISSING, TOKEN_FIRST_BREAK, TOKEN_NOTE, TOKEN_RUN_END,
-    TOKEN_RUN_START, TOKEN_RUNTIME_LOADED, TOKEN_SEARCH_ORDER, TOKEN_SEARCH_PATH,
-    TOKEN_STATIC_BAD_IMAGE, TOKEN_STATIC_END, TOKEN_STATIC_FOUND, TOKEN_STATIC_IMPORT,
-    TOKEN_STATIC_MISSING, TOKEN_STATIC_START, TOKEN_SUCCESS, TOKEN_SUMMARY,
+    emit, field, hex_u32, hex_usize, quote, summary_fields, SummaryCounts, TOKEN_DEBUG_STRING,
+    TOKEN_DYNAMIC_MISSING, TOKEN_FIRST_BREAK, TOKEN_NOTE, TOKEN_RUNTIME_LOADED, TOKEN_RUN_END,
+    TOKEN_RUN_START, TOKEN_SEARCH_ORDER, TOKEN_SEARCH_PATH, TOKEN_STATIC_BAD_IMAGE,
+    TOKEN_STATIC_END, TOKEN_STATIC_FOUND, TOKEN_STATIC_IMPORT, TOKEN_STATIC_MISSING,
+    TOKEN_STATIC_START, TOKEN_SUCCESS, TOKEN_SUMMARY,
 };
 #[cfg(windows)]
 use loader_snaps::{LoaderSnapsGuard, PebEnableInfo};
@@ -779,14 +779,7 @@ fn diagnose_static_imports(
                     .cloned()
                     .or_else(|| search::resolve_dll(&dll, &context).chosen);
                 if let Some(path) = observed_path {
-                    let key = normalize_module_visit_key(&path);
-                    if visited.insert(key) {
-                        queue.push_back(WalkNode {
-                            module_path: path.clone(),
-                            module_name: module_name_lower(&path),
-                            depth: node.depth + 1,
-                        });
-                    }
+                    queue_module_if_unvisited(&mut visited, &mut queue, &path, node.depth + 1);
                 }
                 continue;
             }
@@ -829,14 +822,7 @@ fn diagnose_static_imports(
                     }
 
                     if let Some(chosen) = resolution.chosen.as_ref() {
-                        let key = normalize_module_visit_key(chosen);
-                        if visited.insert(key) {
-                            queue.push_back(WalkNode {
-                                module_path: chosen.clone(),
-                                module_name: module_name_lower(chosen),
-                                depth: node.depth + 1,
-                            });
-                        }
+                        queue_module_if_unvisited(&mut visited, &mut queue, chosen, node.depth + 1);
                     }
                 }
                 ResolutionKind::Missing => {
@@ -912,7 +898,9 @@ fn diagnose_static_imports(
             TOKEN_NOTE,
             &vec![field(
                 "detail",
-                quote("KnownDLLs/SxS/AddDllDirectory not modeled in v1"),
+                quote(
+                    "KnownDLLs/SxS/SetDllDirectory/AddDllDirectory/alternate loader search not modeled in v1",
+                ),
             )],
         );
         emit(
@@ -944,6 +932,26 @@ fn consider_first_issue(current: &mut Option<FirstIssue>, candidate: FirstIssue)
     if replace {
         *current = Some(candidate);
     }
+}
+
+#[cfg(windows)]
+fn queue_module_if_unvisited(
+    visited: &mut HashSet<String>,
+    queue: &mut VecDeque<WalkNode>,
+    module_path: &Path,
+    depth: u32,
+) -> bool {
+    let key = normalize_module_visit_key(module_path);
+    if !visited.insert(key) {
+        return false;
+    }
+
+    queue.push_back(WalkNode {
+        module_path: module_path.to_path_buf(),
+        module_name: module_name_lower(module_path),
+        depth,
+    });
+    true
 }
 
 #[cfg(windows)]
@@ -1648,6 +1656,102 @@ fn display_path(path: &Path) -> String {
         rest.to_string()
     } else {
         raw
+    }
+}
+
+#[cfg(all(test, windows))]
+mod static_diagnosis_tests {
+    use super::*;
+    use std::fs;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_TEST_ID: AtomicU64 = AtomicU64::new(1);
+
+    fn missing_issue(via: &str, depth: u32, dll: &str) -> FirstIssue {
+        FirstIssue {
+            module: "host.exe".to_string(),
+            via: via.to_string(),
+            depth,
+            dll: dll.to_string(),
+            diagnosis: "MISSING_STATIC_IMPORT",
+            kind: ResolutionKind::Missing,
+            candidates: Vec::new(),
+        }
+    }
+
+    fn unique_temp_dir(name: &str) -> PathBuf {
+        let id = NEXT_TEST_ID.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("loadwhat-{name}-{}-{id}", std::process::id()));
+        fs::create_dir_all(&dir).expect("failed to create temp dir");
+        dir
+    }
+
+    #[test]
+    fn lowest_depth_wins() {
+        let mut current = None;
+        consider_first_issue(&mut current, missing_issue("b.dll", 3, "missing_x.dll"));
+        consider_first_issue(&mut current, missing_issue("a.dll", 2, "missing_y.dll"));
+
+        let selected = current.expect("expected selected issue");
+        assert_eq!(selected.depth, 2);
+        assert_eq!(selected.via, "a.dll");
+        assert_eq!(selected.dll, "missing_y.dll");
+    }
+
+    #[test]
+    fn same_depth_tie_breaks_by_via_then_dll() {
+        let mut current = None;
+        consider_first_issue(&mut current, missing_issue("z.dll", 2, "missing_z.dll"));
+        consider_first_issue(&mut current, missing_issue("a.dll", 2, "missing_y.dll"));
+        consider_first_issue(&mut current, missing_issue("a.dll", 2, "missing_x.dll"));
+
+        let selected = current.expect("expected selected issue");
+        assert_eq!(selected.depth, 2);
+        assert_eq!(selected.via, "a.dll");
+        assert_eq!(selected.dll, "missing_x.dll");
+    }
+
+    #[test]
+    fn visited_set_dedups_normalized_absolute_paths() {
+        let temp_dir = unique_temp_dir("visited-set");
+        let module_path = temp_dir.join("lwtest_shared.dll");
+        fs::write(&module_path, b"fixture").expect("failed to create temp module");
+
+        let duplicate_path = temp_dir.join(".").join("LWTEST_SHARED.DLL");
+        let mut visited = HashSet::new();
+        let mut queue = VecDeque::new();
+
+        assert!(queue_module_if_unvisited(
+            &mut visited,
+            &mut queue,
+            &module_path,
+            1
+        ));
+        assert!(!queue_module_if_unvisited(
+            &mut visited,
+            &mut queue,
+            &duplicate_path,
+            1
+        ));
+        assert_eq!(queue.len(), 1);
+
+        let queued = queue.pop_front().expect("expected queued module");
+        assert_eq!(queued.depth, 1);
+        assert_eq!(queued.module_name, "lwtest_shared.dll");
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn ignores_api_set_import_names() {
+        assert!(is_api_set_dll("api-ms-win-core-file-l1-2-0.dll"));
+        assert!(is_api_set_dll("ext-ms-win-ntuser-window-l1-1-0.dll"));
+    }
+
+    #[test]
+    fn does_not_ignore_normal_import_names() {
+        assert!(!is_api_set_dll("kernel32.dll"));
+        assert!(!is_api_set_dll("lwtest_a.dll"));
     }
 }
 
