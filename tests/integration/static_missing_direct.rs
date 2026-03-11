@@ -4,9 +4,7 @@ use std::time::Duration;
 
 #[test]
 fn static_missing_direct() {
-    let Some(paths) = harness::paths::from_env() else {
-        return;
-    };
+    let paths = harness::paths::require_from_env();
 
     let case = harness::case::TestCase::new(&paths, "static_missing_direct")
         .expect("failed to initialize test case");
@@ -22,7 +20,6 @@ fn static_missing_direct() {
         OsString::from("run"),
         OsString::from("--cwd"),
         harness::case::os(&app_dir),
-        OsString::from("--loader-snaps"),
         harness::case::os(&exe),
     ];
     let result = harness::run_loadwhat::run(&paths, case.root(), &args, Duration::from_secs(20))

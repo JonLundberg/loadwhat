@@ -4,9 +4,7 @@ use std::time::Duration;
 
 #[test]
 fn static_wrong_pick_prefers_app_directory() {
-    let Some(paths) = harness::paths::from_env() else {
-        return;
-    };
+    let paths = harness::paths::require_from_env();
 
     let case = harness::case::TestCase::new(&paths, "static_wrong_pick")
         .expect("failed to initialize test case");

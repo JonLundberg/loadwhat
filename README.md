@@ -5,9 +5,14 @@
 ## Current commands
 
 ```text
-loadwhat run [--cwd <dir>] [--timeout <n>] [--no-loader-snaps] [--trace|--summary] [-v|--verbose] <exe_path> [args...]
+loadwhat run [OPTIONS] <TARGET> [TARGET_ARGS...]
 loadwhat imports <exe_or_dll> [--cwd <dir>]
 ```
+
+- All `run` options must appear before `<TARGET>`.
+- Everything after `<TARGET>` is passed directly to the target process.
+- Loader-snaps is enabled by default; use `--no-loader-snaps` to disable it.
+- Summary output is the default; use `--trace` or `-v` for detail.
 
 ## Build
 
@@ -28,7 +33,9 @@ target\release\loadwhat.exe
   - emits exactly one line for first-break diagnosis (`STATIC_MISSING`, `STATIC_BAD_IMAGE`, or `DYNAMIC_MISSING`)
   - emits `SUCCESS status=0` when startup succeeds without a diagnosed load issue
 - `--trace` enables detailed diagnostic trace output (`SEARCH_ORDER`, `SEARCH_PATH`, and related diagnosis lines).
-- `-v`/`--verbose` implies `--trace` and adds runtime timeline tokens:
+- `-v`/`--verbose` enables verbose runtime detail and also enables trace, unless a later `--summary` switches back to summary mode.
+- Later flags win per dimension: `--trace` vs `--summary`, `-v`/`--verbose` vs `--quiet`, and `--loader-snaps` vs `--no-loader-snaps`.
+- Verbose mode adds runtime timeline tokens:
   - `RUN_START`, `RUNTIME_LOADED`, `DEBUG_STRING`, `RUN_END`
   - plus full static/search/summary tokens
   - verbose `SUMMARY` uses explicit counters: `first_break`, `static_missing`, `static_bad_image`, `dynamic_missing`, `runtime_loaded`, `com_issues`

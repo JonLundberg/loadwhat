@@ -8,6 +8,7 @@ pub const HOST_DYNAMIC_LOADLIBRARY_NAME_EXE: &str = "host_dynamic_loadlibrary_na
 pub const HOST_DYNAMIC_LOADLIBRARY_FULLPATH_EXE: &str = "host_dynamic_loadlibrary_fullpath.exe";
 pub const HOST_DYNAMIC_LOADLIBRARY_NESTED_EXE: &str = "host_dynamic_loadlibrary_nested.exe";
 pub const HOST_DYNAMIC_LOADLIBRARY_SEQUENCE_EXE: &str = "host_dynamic_loadlibrary_sequence.exe";
+pub const HOST_ECHO_ARGV_CWD_EXE: &str = "host_echo_argv_cwd.exe";
 
 pub const DLL_LWTEST_A: &str = "lwtest_a.dll";
 pub const DLL_LWTEST_A_V1: &str = "lwtest_a_v1.dll";

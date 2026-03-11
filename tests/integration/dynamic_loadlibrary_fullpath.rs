@@ -4,9 +4,7 @@ use std::time::Duration;
 
 #[test]
 fn dynamic_loadlibrary_fullpath_reports_transitive_missing_dll() {
-    let Some(paths) = harness::paths::from_env() else {
-        return;
-    };
+    let paths = harness::paths::require_from_env();
 
     let case = harness::case::TestCase::new(&paths, "dynamic_loadlibrary_fullpath")
         .expect("failed to initialize test case");
@@ -27,7 +25,6 @@ fn dynamic_loadlibrary_fullpath_reports_transitive_missing_dll() {
         OsString::from("run"),
         OsString::from("--cwd"),
         harness::case::os(&app_dir),
-        OsString::from("--loader-snaps"),
         harness::case::os(&exe),
         harness::case::os(&dll_path),
     ];
@@ -42,9 +39,7 @@ fn dynamic_loadlibrary_fullpath_reports_transitive_missing_dll() {
 
 #[test]
 fn dynamic_loadlibrary_fullpath_loads_requested_root_but_resolves_deps_by_name() {
-    let Some(paths) = harness::paths::from_env() else {
-        return;
-    };
+    let paths = harness::paths::require_from_env();
 
     let case = harness::case::TestCase::new(&paths, "dynamic_loadlibrary_fullpath_positive")
         .expect("failed to initialize test case");

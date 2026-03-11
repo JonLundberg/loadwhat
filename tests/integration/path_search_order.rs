@@ -17,9 +17,7 @@ fn path_env_value(extra_dirs: &[&Path]) -> String {
 
 #[test]
 fn dynamic_name_uses_path_when_app_and_cwd_do_not_contain_dll() {
-    let Some(paths) = harness::paths::from_env() else {
-        return;
-    };
+    let paths = harness::paths::require_from_env();
 
     let case = harness::case::TestCase::new(&paths, "path_search_fallback")
         .expect("failed to initialize test case");
@@ -66,9 +64,7 @@ fn dynamic_name_uses_path_when_app_and_cwd_do_not_contain_dll() {
 
 #[test]
 fn dynamic_name_prefers_app_directory_over_path() {
-    let Some(paths) = harness::paths::from_env() else {
-        return;
-    };
+    let paths = harness::paths::require_from_env();
 
     let case = harness::case::TestCase::new(&paths, "path_search_app_over_path")
         .expect("failed to initialize test case");
@@ -117,9 +113,7 @@ fn dynamic_name_prefers_app_directory_over_path() {
 
 #[test]
 fn dynamic_name_uses_path_entry_order() {
-    let Some(paths) = harness::paths::from_env() else {
-        return;
-    };
+    let paths = harness::paths::require_from_env();
 
     let case = harness::case::TestCase::new(&paths, "path_search_path_order")
         .expect("failed to initialize test case");

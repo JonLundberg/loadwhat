@@ -4,9 +4,7 @@ use std::time::Duration;
 
 #[test]
 fn dynamic_nested_loadlibrary_success() {
-    let Some(paths) = harness::paths::from_env() else {
-        return;
-    };
+    let paths = harness::paths::require_from_env();
 
     let case = harness::case::TestCase::new(&paths, "dynamic_nested_loadlibrary_success")
         .expect("failed to initialize test case");
@@ -30,7 +28,6 @@ fn dynamic_nested_loadlibrary_success() {
         OsString::from("run"),
         OsString::from("--cwd"),
         harness::case::os(&cwd_dir),
-        OsString::from("--loader-snaps"),
         harness::case::os(&exe),
     ];
     let result = harness::run_loadwhat::run(&paths, case.root(), &args, Duration::from_secs(20))
@@ -46,9 +43,7 @@ fn dynamic_nested_loadlibrary_success() {
 
 #[test]
 fn dynamic_nested_loadlibrary_reports_missing_b() {
-    let Some(paths) = harness::paths::from_env() else {
-        return;
-    };
+    let paths = harness::paths::require_from_env();
 
     let case = harness::case::TestCase::new(&paths, "dynamic_nested_loadlibrary_missing_b")
         .expect("failed to initialize test case");
@@ -69,7 +64,6 @@ fn dynamic_nested_loadlibrary_reports_missing_b() {
         OsString::from("run"),
         OsString::from("--cwd"),
         harness::case::os(&cwd_dir),
-        OsString::from("--loader-snaps"),
         harness::case::os(&exe),
     ];
     let result = harness::run_loadwhat::run(&paths, case.root(), &args, Duration::from_secs(20))

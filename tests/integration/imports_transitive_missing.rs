@@ -4,9 +4,7 @@ use std::time::Duration;
 
 #[test]
 fn imports_reports_transitive_missing_with_via_and_depth() {
-    let Some(paths) = harness::paths::from_env() else {
-        return;
-    };
+    let paths = harness::paths::require_from_env();
 
     let case = harness::case::TestCase::new(&paths, "imports_transitive_missing")
         .expect("failed to initialize test case");
@@ -26,8 +24,9 @@ fn imports_reports_transitive_missing_with_via_and_depth() {
         OsString::from("--cwd"),
         harness::case::os(&app_dir),
     ];
-    let result = harness::run_loadwhat::run(&paths, case.root(), &args, Duration::from_secs(20))
-        .expect("failed to run loadwhat");
+    let result =
+        harness::run_loadwhat::run_public(&paths, case.root(), &args, Duration::from_secs(20))
+            .expect("failed to run loadwhat");
 
     harness::assert::assert_not_timed_out(&result);
     harness::assert::assert_exit_code(&result, 10);

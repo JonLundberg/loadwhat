@@ -15,13 +15,32 @@ pub struct RunResult {
     pub timed_out: bool,
 }
 
-pub fn run(
+pub fn run_internal_test_mode(
     paths: &HarnessPaths,
     current_dir: &Path,
     args: &[OsString],
     timeout: Duration,
 ) -> Result<RunResult, String> {
     run_with_test_mode(paths, current_dir, args, timeout, true, &[])
+}
+
+pub fn run_internal_test_mode_with_env(
+    paths: &HarnessPaths,
+    current_dir: &Path,
+    args: &[OsString],
+    timeout: Duration,
+    env_pairs: &[(&str, &str)],
+) -> Result<RunResult, String> {
+    run_with_test_mode(paths, current_dir, args, timeout, true, env_pairs)
+}
+
+pub fn run(
+    paths: &HarnessPaths,
+    current_dir: &Path,
+    args: &[OsString],
+    timeout: Duration,
+) -> Result<RunResult, String> {
+    run_internal_test_mode(paths, current_dir, args, timeout)
 }
 
 pub fn run_with_env(
@@ -31,7 +50,7 @@ pub fn run_with_env(
     timeout: Duration,
     env_pairs: &[(&str, &str)],
 ) -> Result<RunResult, String> {
-    run_with_test_mode(paths, current_dir, args, timeout, true, env_pairs)
+    run_internal_test_mode_with_env(paths, current_dir, args, timeout, env_pairs)
 }
 
 pub fn run_public(
@@ -67,11 +86,13 @@ fn run_with_test_mode(
         .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    if !enable_test_mode {
-        command.env_remove("LOADWHAT_TEST_MODE");
-    }
     for (key, value) in env_pairs {
         command.env(key, value);
+    }
+    if enable_test_mode {
+        command.env("LOADWHAT_TEST_MODE", "1");
+    } else {
+        command.env_remove("LOADWHAT_TEST_MODE");
     }
 
     let mut child = command

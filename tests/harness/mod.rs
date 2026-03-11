@@ -1,3 +1,5 @@
+#![cfg_attr(not(feature = "harness-tests"), allow(dead_code))]
+
 pub mod assert;
 pub mod case;
 pub mod fixture;

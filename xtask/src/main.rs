@@ -140,7 +140,12 @@ fn run_rust_tests(
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
 
-    run_command("cargo", &["test", "--tests"], Some(repo_root), &env_refs)?;
+    run_command(
+        "cargo",
+        &["test", "--tests", "--features", "harness-tests"],
+        Some(repo_root),
+        &env_refs,
+    )?;
 
     Ok(())
 }

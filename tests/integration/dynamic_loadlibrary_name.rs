@@ -4,9 +4,7 @@ use std::time::Duration;
 
 #[test]
 fn dynamic_loadlibrary_name_uses_target_cwd_search() {
-    let Some(paths) = harness::paths::from_env() else {
-        return;
-    };
+    let paths = harness::paths::require_from_env();
 
     let case = harness::case::TestCase::new(&paths, "dynamic_loadlibrary_name")
         .expect("failed to initialize test case");

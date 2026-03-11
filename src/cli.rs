@@ -97,6 +97,7 @@ fn parse_run(values: &[OsString]) -> Result<Command, String> {
             }
             "--verbose" | "-v" => {
                 verbose = true;
+                trace = true;
             }
             "--trace" => {
                 trace = true;
@@ -131,10 +132,6 @@ fn parse_run(values: &[OsString]) -> Result<Command, String> {
 
     let exe_path = PathBuf::from(values[i].clone());
     let exe_args = values[i + 1..].to_vec();
-
-    if verbose {
-        trace = true;
-    }
 
     Ok(Command::Run(RunOptions {
         exe_path,
@@ -187,10 +184,11 @@ pub fn usage() -> String {
     out.push_str("  loadwhat help\n");
     out.push_str("\nRun options:\n");
     out.push_str("  --cwd <path>      Working directory for target process\n");
-    out.push_str("  --timeout <ms>    Maximum runtime before termination\n");
+    out.push_str("  --timeout-ms <ms> Maximum runtime before termination\n");
     out.push_str("  --trace           Print diagnostic trace output\n");
     out.push_str("  --summary         Print summary output (default)\n");
     out.push_str("  -v, --verbose     Print detailed diagnostic output\n");
+    out.push_str("  --quiet           Disable verbose runtime detail\n");
     out.push_str("  --no-loader-snaps Disable loader-snaps Phase C search\n");
     out.push_str("\nBehavior:\n");
     out.push_str("  - Loader-snaps Phase C search is enabled by default\n");
@@ -213,108 +211,215 @@ fn looks_like_run_option(token: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_from, Command};
+    use std::ffi::OsString;
+    use std::path::PathBuf;
+
+    use super::{parse_from, Command, ImportsOptions, RunOptions};
+
+    fn parse_run(args: &[&str]) -> RunOptions {
+        let mut values = vec!["loadwhat", "run"];
+        values.extend_from_slice(args);
+        match parse_from(values).unwrap() {
+            Command::Run(opts) => opts,
+            _ => panic!("expected run command"),
+        }
+    }
+
+    fn parse_run_err(args: &[&str]) -> String {
+        let mut values = vec!["loadwhat", "run"];
+        values.extend_from_slice(args);
+        parse_from(values).unwrap_err()
+    }
+
+    fn parse_imports(args: &[&str]) -> ImportsOptions {
+        let mut values = vec!["loadwhat", "imports"];
+        values.extend_from_slice(args);
+        match parse_from(values).unwrap() {
+            Command::Imports(opts) => opts,
+            _ => panic!("expected imports command"),
+        }
+    }
 
     #[test]
     fn parses_run_target_args_without_separator() {
-        let cmd = parse_from([
-            "loadwhat",
-            "run",
-            "--timeout-ms",
-            "1234",
-            r"C:\tool\app.exe",
-            "--flag",
-        ])
-        .unwrap();
-
-        match cmd {
-            Command::Run(opts) => {
-                assert_eq!(opts.timeout_ms, 1234);
-                assert_eq!(opts.exe_args.len(), 1);
-            }
-            _ => panic!("expected run command"),
-        }
+        let opts = parse_run(&["--timeout-ms", "1234", r"C:\tool\app.exe", "--flag"]);
+        assert_eq!(opts.timeout_ms, 1234);
+        assert_eq!(opts.exe_args, vec![OsString::from("--flag")]);
     }
 
     #[test]
     fn parses_run_verbose_short_flag() {
-        let cmd = parse_from(["loadwhat", "run", "-v", "notepad.exe"]).unwrap();
-        match cmd {
-            Command::Run(opts) => {
-                assert!(opts.verbose);
-            }
-            _ => panic!("expected run command"),
-        }
+        let opts = parse_run(&["-v", "notepad.exe"]);
+        assert!(opts.verbose);
+        assert!(opts.trace);
     }
 
     #[test]
     fn run_defaults_loader_snaps_on() {
-        let cmd = parse_from(["loadwhat", "run", "notepad.exe"]).unwrap();
-        match cmd {
-            Command::Run(opts) => {
-                assert!(opts.loader_snaps);
-            }
-            _ => panic!("expected run command"),
-        }
+        let opts = parse_run(&["notepad.exe"]);
+        assert!(opts.loader_snaps);
+        assert_eq!(opts.timeout_ms, 30_000);
+        assert!(!opts.trace);
+        assert!(!opts.verbose);
     }
 
     #[test]
     fn parses_run_no_loader_snaps_flag() {
-        let cmd = parse_from(["loadwhat", "run", "--no-loader-snaps", "notepad.exe"]).unwrap();
-        match cmd {
-            Command::Run(opts) => {
-                assert!(!opts.loader_snaps);
-            }
-            _ => panic!("expected run command"),
-        }
+        let opts = parse_run(&["--no-loader-snaps", "notepad.exe"]);
+        assert!(!opts.loader_snaps);
     }
 
     #[test]
     fn parses_run_trace_flag() {
-        let cmd = parse_from(["loadwhat", "run", "--trace", "notepad.exe"]).unwrap();
-        match cmd {
-            Command::Run(opts) => {
-                assert!(opts.trace);
-            }
-            _ => panic!("expected run command"),
-        }
-    }
-
-    #[test]
-    fn verbose_implies_trace() {
-        let cmd = parse_from(["loadwhat", "run", "--summary", "-v", "notepad.exe"]).unwrap();
-        match cmd {
-            Command::Run(opts) => {
-                assert!(opts.verbose);
-                assert!(opts.trace);
-            }
-            _ => panic!("expected run command"),
-        }
+        let opts = parse_run(&["--trace", "notepad.exe"]);
+        assert!(opts.trace);
     }
 
     #[test]
     fn target_like_option_after_target_is_passed_through() {
-        let cmd = parse_from(["loadwhat", "run", "notepad.exe", "--verbose"]).unwrap();
-        match cmd {
-            Command::Run(opts) => {
-                assert!(!opts.verbose);
-                assert_eq!(opts.exe_args, vec![std::ffi::OsString::from("--verbose")]);
-            }
-            _ => panic!("expected run command"),
-        }
+        let opts = parse_run(&["notepad.exe", "--verbose"]);
+        assert!(!opts.verbose);
+        assert_eq!(opts.exe_args, vec![OsString::from("--verbose")]);
     }
 
     #[test]
-    fn missing_target_uses_new_error_message() {
-        let err = parse_from(["loadwhat", "run", "--verbose"]).unwrap_err();
+    fn missing_target_reports_usage() {
+        let err = parse_run_err(&[]);
         assert!(err.contains("error: missing target executable"));
         assert!(err.contains("loadwhat run [OPTIONS] <TARGET> [TARGET_ARGS...]"));
+    }
+
+    #[test]
+    fn missing_cwd_value_reports_error() {
+        let err = parse_run_err(&["--cwd"]);
+        assert!(err.contains("--cwd requires a value"));
+    }
+
+    #[test]
+    fn missing_timeout_value_reports_error() {
+        let err = parse_run_err(&["--timeout-ms"]);
+        assert!(err.contains("--timeout-ms requires a value"));
+    }
+
+    #[test]
+    fn invalid_timeout_value_reports_error() {
+        let err = parse_run_err(&["--timeout-ms", "nope", "notepad.exe"]);
+        assert!(err.contains("invalid --timeout-ms value: nope"));
+    }
+
+    #[test]
+    fn unknown_pre_target_long_option_reports_error() {
+        let err = parse_run_err(&["--bogus", "notepad.exe"]);
+        assert!(err.contains("unknown run option: --bogus"));
+    }
+
+    #[test]
+    fn unknown_pre_target_short_option_reports_error() {
+        let err = parse_run_err(&["-z", "notepad.exe"]);
+        assert!(err.contains("unknown run option: -z"));
+    }
+
+    #[test]
+    fn summary_then_verbose_enables_trace() {
+        let opts = parse_run(&["--summary", "-v", "notepad.exe"]);
+        assert!(opts.verbose);
+        assert!(opts.trace);
+    }
+
+    #[test]
+    fn verbose_then_summary_keeps_verbose_but_disables_trace() {
+        let opts = parse_run(&["-v", "--summary", "notepad.exe"]);
+        assert!(opts.verbose);
+        assert!(!opts.trace);
+    }
+
+    #[test]
+    fn quiet_does_not_clear_explicit_trace() {
+        let opts = parse_run(&["--trace", "--quiet", "notepad.exe"]);
+        assert!(!opts.verbose);
+        assert!(opts.trace);
+    }
+
+    #[test]
+    fn trace_after_quiet_reenables_trace() {
+        let opts = parse_run(&["--quiet", "--trace", "notepad.exe"]);
+        assert!(!opts.verbose);
+        assert!(opts.trace);
+    }
+
+    #[test]
+    fn repeated_cwd_uses_last_value() {
+        let opts = parse_run(&["--cwd", r"C:\one", "--cwd", r"C:\two", "notepad.exe"]);
+        assert_eq!(opts.cwd, Some(PathBuf::from(r"C:\two")));
+    }
+
+    #[test]
+    fn repeated_timeout_uses_last_value() {
+        let opts = parse_run(&["--timeout-ms", "1", "--timeout", "2", "notepad.exe"]);
+        assert_eq!(opts.timeout_ms, 2);
+    }
+
+    #[test]
+    fn repeated_loader_snaps_flags_use_last_value() {
+        let opts = parse_run(&[
+            "--no-loader-snaps",
+            "--loader-snaps",
+            "--no-loader-snaps",
+            "notepad.exe",
+        ]);
+        assert!(!opts.loader_snaps);
+    }
+
+    #[test]
+    fn later_loader_snaps_flag_can_reenable_loader_snaps() {
+        let opts = parse_run(&["--no-loader-snaps", "--loader-snaps", "notepad.exe"]);
+        assert!(opts.loader_snaps);
+    }
+
+    #[test]
+    fn imports_parses_module_only() {
+        let opts = parse_imports(&[r"C:\tool\app.exe"]);
+        assert_eq!(opts.module_path, PathBuf::from(r"C:\tool\app.exe"));
+        assert_eq!(opts.cwd, None);
+    }
+
+    #[test]
+    fn imports_parses_optional_cwd() {
+        let opts = parse_imports(&[r"C:\tool\app.exe", "--cwd", r"C:\work"]);
+        assert_eq!(opts.cwd, Some(PathBuf::from(r"C:\work")));
+    }
+
+    #[test]
+    fn imports_missing_cwd_value_reports_error() {
+        let err = parse_from(["loadwhat", "imports", r"C:\tool\app.exe", "--cwd"]).unwrap_err();
+        assert!(err.contains("--cwd requires a value"));
+    }
+
+    #[test]
+    fn imports_unknown_option_reports_error() {
+        let err =
+            parse_from(["loadwhat", "imports", r"C:\tool\app.exe", "--bogus"]).unwrap_err();
+        assert!(err.contains("unknown imports option: --bogus"));
+    }
+
+    #[test]
+    fn imports_ignores_quiet_verbose_and_strict() {
+        let opts = parse_imports(&[
+            r"C:\tool\app.exe",
+            "--quiet",
+            "--verbose",
+            "--strict",
+            "--cwd",
+            r"C:\work",
+        ]);
+        assert_eq!(opts.cwd, Some(PathBuf::from(r"C:\work")));
     }
 
     #[test]
     fn usage_describes_new_run_interface() {
         let help = super::usage();
         assert!(help.contains("loadwhat run [OPTIONS] <TARGET> [TARGET_ARGS...]"));
+        assert!(help.contains("--timeout-ms <ms>"));
         assert!(help.contains("--no-loader-snaps"));
         assert!(help.contains("Loader-snaps Phase C search is enabled by default"));
     }

@@ -4,9 +4,7 @@ use std::time::Duration;
 
 #[test]
 fn dynamic_missing_direct_reports_lwtest_a() {
-    let Some(paths) = harness::paths::from_env() else {
-        return;
-    };
+    let paths = harness::paths::require_from_env();
 
     let case = harness::case::TestCase::new(&paths, "dynamic_missing_direct")
         .expect("failed to initialize test case");
@@ -35,9 +33,7 @@ fn dynamic_missing_direct_reports_lwtest_a() {
 
 #[test]
 fn dynamic_missing_direct_can_disable_loader_snaps() {
-    let Some(paths) = harness::paths::from_env() else {
-        return;
-    };
+    let paths = harness::paths::require_from_env();
 
     let case = harness::case::TestCase::new(&paths, "dynamic_missing_direct_no_loader_snaps")
         .expect("failed to initialize test case");

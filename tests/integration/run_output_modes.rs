@@ -24,9 +24,7 @@ fn token_lines(stdout: &str) -> Vec<&str> {
 
 #[test]
 fn run_summary_emits_single_static_missing_line() {
-    let Some(paths) = harness::paths::from_env() else {
-        return;
-    };
+    let paths = harness::paths::require_from_env();
 
     let case = harness::case::TestCase::new(&paths, "run_summary_missing")
         .expect("failed to initialize test case");
@@ -79,9 +77,7 @@ fn run_summary_emits_single_static_missing_line() {
 
 #[test]
 fn run_summary_emits_transitive_static_missing_with_via_and_depth() {
-    let Some(paths) = harness::paths::from_env() else {
-        return;
-    };
+    let paths = harness::paths::require_from_env();
 
     let case = harness::case::TestCase::new(&paths, "run_summary_transitive_missing")
         .expect("failed to initialize test case");
@@ -135,9 +131,7 @@ fn run_summary_emits_transitive_static_missing_with_via_and_depth() {
 
 #[test]
 fn run_summary_emits_success_line() {
-    let Some(paths) = harness::paths::from_env() else {
-        return;
-    };
+    let paths = harness::paths::require_from_env();
 
     let case = harness::case::TestCase::new(&paths, "run_summary_success")
         .expect("failed to initialize test case");
@@ -178,9 +172,7 @@ fn run_summary_emits_success_line() {
 
 #[test]
 fn run_trace_emits_detailed_lines() {
-    let Some(paths) = harness::paths::from_env() else {
-        return;
-    };
+    let paths = harness::paths::require_from_env();
 
     let case = harness::case::TestCase::new(&paths, "run_trace_missing")
         .expect("failed to initialize test case");
@@ -216,9 +208,7 @@ fn run_trace_emits_detailed_lines() {
 
 #[test]
 fn imports_emits_static_only_tokens_and_summary() {
-    let Some(paths) = harness::paths::from_env() else {
-        return;
-    };
+    let paths = harness::paths::require_from_env();
 
     let case = harness::case::TestCase::new(&paths, "imports_output_contract")
         .expect("failed to initialize test case");

@@ -15,13 +15,19 @@ This document is the source of truth for current implemented behavior.
 ### Primary workflow
 
 ```text
-loadwhat run [--cwd <dir>] [--timeout <n>] [--no-loader-snaps] [--trace|--summary] [-v|--verbose] <exe_path> [args...]
+loadwhat run [OPTIONS] <TARGET> [TARGET_ARGS...]
 ```
 
-- Run options must appear before `<exe_path>`.
-- `<exe_path>` is the first positional argument after `run`.
-- All arguments after `<exe_path>` are passed unchanged to the target process.
+- Run options must appear before `<TARGET>`.
+- `<TARGET>` is the first positional argument after `run`.
+- All arguments after `<TARGET>` are passed unchanged to the target process.
 - Loader-snaps Phase C is enabled by default; use `--no-loader-snaps` to disable it.
+- Options are applied left-to-right until `<TARGET>` is reached.
+- Later flags win per dimension:
+  - `--trace` vs `--summary`
+  - `-v` / `--verbose` vs `--quiet`
+  - `--loader-snaps` vs `--no-loader-snaps`
+- `-v` / `--verbose` implies trace unless a later `--summary` switches back to summary mode.
 
 ### Helpers
 
@@ -43,7 +49,8 @@ Roadmap-only features are documented in `docs/roadmap.md` and are not part of th
   - `SUCCESS status=0` when startup succeeds and no load issue is diagnosed
 - Summary mode suppresses trace-style token lines (`SEARCH_ORDER`, `SEARCH_PATH`, `NOTE`, runtime timeline tokens).
 - `--trace` enables detailed diagnostic trace output.
-- `-v` or `--verbose` implies `--trace` and additionally emits runtime event output (`RUN_START`, `RUNTIME_LOADED`, `DEBUG_STRING`, `RUN_END`) and extended static diagnosis output (`STATIC_*`, `SEARCH_*`, `FIRST_BREAK`, `SUMMARY`).
+- `-v` or `--verbose` enables verbose runtime event output (`RUN_START`, `RUNTIME_LOADED`, `DEBUG_STRING`, `RUN_END`) and extended static diagnosis output (`STATIC_*`, `SEARCH_*`, `FIRST_BREAK`, `SUMMARY`).
+- If a later `--summary` appears after `-v` / `--verbose`, summary mode wins and trace output is suppressed for that invocation.
 - Verbose `SUMMARY` fields use explicit diagnosis counters:
   - `run`: `SUMMARY first_break=true|false static_missing=N static_bad_image=N dynamic_missing=N runtime_loaded=N com_issues=0`
   - `imports`: `SUMMARY first_break=false static_missing=N static_bad_image=N dynamic_missing=0 runtime_loaded=0 com_issues=0`

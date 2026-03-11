@@ -10,6 +10,9 @@ categories = ["command-line-utilities", "development-tools::debugging"]
 
 [dependencies]
 
+[features]
+harness-tests = []
+
 [workspace]
 members = [".", "xtask"]
 

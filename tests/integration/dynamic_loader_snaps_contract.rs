@@ -37,9 +37,7 @@ fn quoted_field_value<'a>(line: &'a str, key: &str) -> Option<&'a str> {
 
 #[test]
 fn dynamic_summary_mode_emits_single_missing_line() {
-    let Some(paths) = harness::paths::from_env() else {
-        return;
-    };
+    let paths = harness::paths::require_from_env();
 
     let case = harness::case::TestCase::new(&paths, "dynamic_summary_contract")
         .expect("failed to initialize test case");
@@ -91,9 +89,7 @@ fn dynamic_summary_mode_emits_single_missing_line() {
 
 #[test]
 fn dynamic_trace_mode_emits_search_evidence() {
-    let Some(paths) = harness::paths::from_env() else {
-        return;
-    };
+    let paths = harness::paths::require_from_env();
 
     let case = harness::case::TestCase::new(&paths, "dynamic_trace_contract")
         .expect("failed to initialize test case");
@@ -109,7 +105,6 @@ fn dynamic_trace_mode_emits_search_evidence() {
         OsString::from("run"),
         OsString::from("--cwd"),
         harness::case::os(&app_dir),
-        OsString::from("--loader-snaps"),
         OsString::from("--trace"),
         harness::case::os(&exe),
     ];
@@ -143,9 +138,7 @@ fn dynamic_trace_mode_emits_search_evidence() {
 
 #[test]
 fn dynamic_verbose_mode_keeps_diagnosis_stable() {
-    let Some(paths) = harness::paths::from_env() else {
-        return;
-    };
+    let paths = harness::paths::require_from_env();
 
     let case = harness::case::TestCase::new(&paths, "dynamic_verbose_contract")
         .expect("failed to initialize test case");
@@ -161,7 +154,6 @@ fn dynamic_verbose_mode_keeps_diagnosis_stable() {
         OsString::from("run"),
         OsString::from("--cwd"),
         harness::case::os(&app_dir),
-        OsString::from("--loader-snaps"),
         OsString::from("-v"),
         harness::case::os(&exe),
     ];
@@ -205,9 +197,7 @@ fn dynamic_verbose_mode_keeps_diagnosis_stable() {
 
 #[test]
 fn static_missing_beats_loader_snaps_dynamic_noise() {
-    let Some(paths) = harness::paths::from_env() else {
-        return;
-    };
+    let paths = harness::paths::require_from_env();
 
     let case = harness::case::TestCase::new(&paths, "static_beats_dynamic")
         .expect("failed to initialize test case");
@@ -223,7 +213,6 @@ fn static_missing_beats_loader_snaps_dynamic_noise() {
         OsString::from("run"),
         OsString::from("--cwd"),
         harness::case::os(&app_dir),
-        OsString::from("--loader-snaps"),
         OsString::from("-v"),
         harness::case::os(&exe),
     ];
@@ -254,9 +243,7 @@ fn static_missing_beats_loader_snaps_dynamic_noise() {
 
 #[test]
 fn dynamic_success_with_loader_snaps_emits_success_only() {
-    let Some(paths) = harness::paths::from_env() else {
-        return;
-    };
+    let paths = harness::paths::require_from_env();
 
     let case = harness::case::TestCase::new(&paths, "dynamic_success_loader_snaps")
         .expect("failed to initialize test case");
@@ -277,7 +264,6 @@ fn dynamic_success_with_loader_snaps_emits_success_only() {
         OsString::from("run"),
         OsString::from("--cwd"),
         harness::case::os(&cwd_dir),
-        OsString::from("--loader-snaps"),
         harness::case::os(&exe),
     ];
     let result =
@@ -293,9 +279,7 @@ fn dynamic_success_with_loader_snaps_emits_success_only() {
 
 #[test]
 fn dynamic_fullpath_success_uses_requested_path() {
-    let Some(paths) = harness::paths::from_env() else {
-        return;
-    };
+    let paths = harness::paths::require_from_env();
 
     let case = harness::case::TestCase::new(&paths, "dynamic_fullpath_success")
         .expect("failed to initialize test case");
@@ -347,9 +331,7 @@ fn dynamic_fullpath_success_uses_requested_path() {
 
 #[test]
 fn dynamic_bad_image_is_classified_as_bad_image() {
-    let Some(paths) = harness::paths::from_env() else {
-        return;
-    };
+    let paths = harness::paths::require_from_env();
 
     let case = harness::case::TestCase::new(&paths, "dynamic_bad_image")
         .expect("failed to initialize test case");
@@ -368,7 +350,6 @@ fn dynamic_bad_image_is_classified_as_bad_image() {
         OsString::from("run"),
         OsString::from("--cwd"),
         harness::case::os(&app_dir),
-        OsString::from("--loader-snaps"),
         harness::case::os(&exe),
         harness::case::os(&bad_dll),
     ];
@@ -397,9 +378,7 @@ fn dynamic_bad_image_is_classified_as_bad_image() {
 
 #[test]
 fn dynamic_other_includes_status_for_init_failure() {
-    let Some(paths) = harness::paths::from_env() else {
-        return;
-    };
+    let paths = harness::paths::require_from_env();
 
     let case = harness::case::TestCase::new(&paths, "dynamic_other_status")
         .expect("failed to initialize test case");
@@ -424,7 +403,6 @@ fn dynamic_other_includes_status_for_init_failure() {
         OsString::from("run"),
         OsString::from("--cwd"),
         harness::case::os(&cwd_dir),
-        OsString::from("--loader-snaps"),
         harness::case::os(&exe),
     ];
     let result =
@@ -453,9 +431,7 @@ fn dynamic_other_includes_status_for_init_failure() {
 
 #[test]
 fn dynamic_multiple_failures_choose_first_unresolved_app_failure() {
-    let Some(paths) = harness::paths::from_env() else {
-        return;
-    };
+    let paths = harness::paths::require_from_env();
 
     let case = harness::case::TestCase::new(&paths, "dynamic_multiple_failures")
         .expect("failed to initialize test case");
@@ -484,7 +460,6 @@ fn dynamic_multiple_failures_choose_first_unresolved_app_failure() {
         OsString::from("run"),
         OsString::from("--cwd"),
         harness::case::os(&app_dir),
-        OsString::from("--loader-snaps"),
         harness::case::os(&exe),
         harness::case::os(&bad_same_name),
         harness::case::os(&good_a),
@@ -516,9 +491,7 @@ fn dynamic_multiple_failures_choose_first_unresolved_app_failure() {
 
 #[test]
 fn dynamic_trace_without_search_context_still_emits_missing() {
-    let Some(paths) = harness::paths::from_env() else {
-        return;
-    };
+    let paths = harness::paths::require_from_env();
 
     let case = harness::case::TestCase::new(&paths, "dynamic_no_search_context")
         .expect("failed to initialize test case");
@@ -534,7 +507,6 @@ fn dynamic_trace_without_search_context_still_emits_missing() {
         OsString::from("run"),
         OsString::from("--cwd"),
         harness::case::os(&app_dir),
-        OsString::from("--loader-snaps"),
         OsString::from("--trace"),
         harness::case::os(&exe),
     ];
