@@ -33,9 +33,9 @@ fn static_wrong_pick_prefers_app_directory() {
 
     let args = vec![
         OsString::from("run"),
-        harness::case::os(&exe),
         OsString::from("--cwd"),
         harness::case::os(&cwd_dir),
+        harness::case::os(&exe),
     ];
     let result = harness::run_loadwhat::run(&paths, case.root(), &args, Duration::from_secs(20))
         .expect("failed to run loadwhat");

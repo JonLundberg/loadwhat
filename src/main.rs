@@ -1292,6 +1292,7 @@ fn is_ignored_probe_line(text_lower: &str) -> bool {
         || text_lower.contains("ldrpresolvedllname - return")
         || text_lower.contains("ldrpresolvefilename - return")
         || text_lower.contains("ldrpfindloadeddllinternal - return")
+        || text_lower.contains("ldrpreporterror - warning: locating export")
 }
 
 #[cfg(windows)]
@@ -1367,6 +1368,7 @@ fn failure_score(text_lower: &str) -> i32 {
     }
     if has_loader_failure_code(text_lower)
         && (text_lower.contains("failed") || text_lower.contains("error"))
+        && looks_like_loader_failure_context(text_lower)
     {
         return 60;
     }
@@ -1399,10 +1401,24 @@ fn classify_dynamic_candidate_kind(text_lower: &str) -> Option<DynamicCandidateK
     }
     if has_loader_failure_code(text_lower)
         && (text_lower.contains("failed") || text_lower.contains("error"))
+        && looks_like_loader_failure_context(text_lower)
     {
         return Some(DynamicCandidateKind::Other);
     }
     None
+}
+
+#[cfg(windows)]
+fn looks_like_loader_failure_context(text_lower: &str) -> bool {
+    text_lower.contains("ldrloaddll")
+        || text_lower.contains("ldrploadllinternal")
+        || text_lower.contains("loadlibrary")
+        || text_lower.contains("unable to load dll")
+        || text_lower.contains("dll name:")
+        || text_lower.contains("ldrpsearchpath")
+        || text_lower.contains("process initialization failed")
+        || text_lower.contains("_ldrpinitialize")
+        || text_lower.contains("walking the import tables")
 }
 
 #[cfg(windows)]
@@ -1867,6 +1883,15 @@ mod dynamic_missing_tests {
             r#"LdrpFindKnownDll - RETURN: Status: 0xc0000135"#,
             r#"LdrpFindLoadedDllInternal - RETURN: Status: 0xc0000135"#,
             r#"LdrpResolveDllName - RETURN: Status: 0xc0000135"#,
+        ]);
+        assert!(detect_for_tests(&outcome).is_none());
+    }
+
+    #[test]
+    fn export_lookup_warnings_do_not_trigger_dynamic_missing() {
+        let outcome = outcome_with_debug_lines(&[
+            r#"LdrLoadDll - ENTER: DLL name: NTDLL.DLL"#,
+            r#"LdrpReportError - WARNING: Locating export "DllGetActivationFactory" for DLL "Unknown" failed with status: 0xc0000139."#,
         ]);
         assert!(detect_for_tests(&outcome).is_none());
     }

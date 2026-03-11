@@ -28,10 +28,10 @@ fn dynamic_nested_loadlibrary_success() {
 
     let args = vec![
         OsString::from("run"),
-        harness::case::os(&exe),
         OsString::from("--cwd"),
         harness::case::os(&cwd_dir),
         OsString::from("--loader-snaps"),
+        harness::case::os(&exe),
     ];
     let result = harness::run_loadwhat::run(&paths, case.root(), &args, Duration::from_secs(20))
         .expect("failed to run loadwhat");
@@ -67,10 +67,10 @@ fn dynamic_nested_loadlibrary_reports_missing_b() {
 
     let args = vec![
         OsString::from("run"),
-        harness::case::os(&exe),
         OsString::from("--cwd"),
         harness::case::os(&cwd_dir),
         OsString::from("--loader-snaps"),
+        harness::case::os(&exe),
     ];
     let result = harness::run_loadwhat::run(&paths, case.root(), &args, Duration::from_secs(20))
         .expect("failed to run loadwhat");

@@ -44,9 +44,9 @@ fn dynamic_name_uses_path_when_app_and_cwd_do_not_contain_dll() {
     let path_env = path_env_value(&[path1_dir.as_path()]);
     let args = vec![
         OsString::from("run"),
-        harness::case::os(&exe),
         OsString::from("--cwd"),
         harness::case::os(&cwd_dir),
+        harness::case::os(&exe),
     ];
     let result = harness::run_loadwhat::run_with_env(
         &paths,
@@ -95,9 +95,9 @@ fn dynamic_name_prefers_app_directory_over_path() {
     let path_env = path_env_value(&[path1_dir.as_path()]);
     let args = vec![
         OsString::from("run"),
-        harness::case::os(&exe),
         OsString::from("--cwd"),
         harness::case::os(&cwd_dir),
+        harness::case::os(&exe),
     ];
     let result = harness::run_loadwhat::run_with_env(
         &paths,
@@ -149,9 +149,9 @@ fn dynamic_name_uses_path_entry_order() {
     let path_env = path_env_value(&[path1_dir.as_path(), path2_dir.as_path()]);
     let args = vec![
         OsString::from("run"),
-        harness::case::os(&exe),
         OsString::from("--cwd"),
         harness::case::os(&cwd_dir),
+        harness::case::os(&exe),
     ];
     let result = harness::run_loadwhat::run_with_env(
         &paths,

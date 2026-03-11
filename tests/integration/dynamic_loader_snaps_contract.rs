@@ -53,10 +53,9 @@ fn dynamic_summary_mode_emits_single_missing_line() {
 
     let args = vec![
         OsString::from("run"),
-        harness::case::os(&exe),
         OsString::from("--cwd"),
         harness::case::os(&app_dir),
-        OsString::from("--loader-snaps"),
+        harness::case::os(&exe),
     ];
     let result =
         harness::run_loadwhat::run_public(&paths, case.root(), &args, Duration::from_secs(20))
@@ -108,11 +107,11 @@ fn dynamic_trace_mode_emits_search_evidence() {
 
     let args = vec![
         OsString::from("run"),
-        harness::case::os(&exe),
         OsString::from("--cwd"),
         harness::case::os(&app_dir),
         OsString::from("--loader-snaps"),
         OsString::from("--trace"),
+        harness::case::os(&exe),
     ];
     let result =
         harness::run_loadwhat::run_public(&paths, case.root(), &args, Duration::from_secs(20))
@@ -160,11 +159,11 @@ fn dynamic_verbose_mode_keeps_diagnosis_stable() {
 
     let args = vec![
         OsString::from("run"),
-        harness::case::os(&exe),
         OsString::from("--cwd"),
         harness::case::os(&app_dir),
         OsString::from("--loader-snaps"),
         OsString::from("-v"),
+        harness::case::os(&exe),
     ];
     let result =
         harness::run_loadwhat::run_public(&paths, case.root(), &args, Duration::from_secs(20))
@@ -222,11 +221,11 @@ fn static_missing_beats_loader_snaps_dynamic_noise() {
 
     let args = vec![
         OsString::from("run"),
-        harness::case::os(&exe),
         OsString::from("--cwd"),
         harness::case::os(&app_dir),
         OsString::from("--loader-snaps"),
         OsString::from("-v"),
+        harness::case::os(&exe),
     ];
     let result =
         harness::run_loadwhat::run_public(&paths, case.root(), &args, Duration::from_secs(20))
@@ -276,10 +275,10 @@ fn dynamic_success_with_loader_snaps_emits_success_only() {
 
     let args = vec![
         OsString::from("run"),
-        harness::case::os(&exe),
         OsString::from("--cwd"),
         harness::case::os(&cwd_dir),
         OsString::from("--loader-snaps"),
+        harness::case::os(&exe),
     ];
     let result =
         harness::run_loadwhat::run_public(&paths, case.root(), &args, Duration::from_secs(20))
@@ -316,11 +315,10 @@ fn dynamic_fullpath_success_uses_requested_path() {
 
     let args = vec![
         OsString::from("run"),
-        harness::case::os(&exe),
         OsString::from("--cwd"),
         harness::case::os(&app_dir),
         OsString::from("-v"),
-        OsString::from("--"),
+        harness::case::os(&exe),
         harness::case::os(&dll_path),
     ];
     let result =
@@ -368,11 +366,10 @@ fn dynamic_bad_image_is_classified_as_bad_image() {
 
     let args = vec![
         OsString::from("run"),
-        harness::case::os(&exe),
         OsString::from("--cwd"),
         harness::case::os(&app_dir),
         OsString::from("--loader-snaps"),
-        OsString::from("--"),
+        harness::case::os(&exe),
         harness::case::os(&bad_dll),
     ];
     let result =
@@ -425,10 +422,10 @@ fn dynamic_other_includes_status_for_init_failure() {
 
     let args = vec![
         OsString::from("run"),
-        harness::case::os(&exe),
         OsString::from("--cwd"),
         harness::case::os(&cwd_dir),
         OsString::from("--loader-snaps"),
+        harness::case::os(&exe),
     ];
     let result =
         harness::run_loadwhat::run_public(&paths, case.root(), &args, Duration::from_secs(20))
@@ -485,11 +482,10 @@ fn dynamic_multiple_failures_choose_first_unresolved_app_failure() {
 
     let args = vec![
         OsString::from("run"),
-        harness::case::os(&exe),
         OsString::from("--cwd"),
         harness::case::os(&app_dir),
         OsString::from("--loader-snaps"),
-        OsString::from("--"),
+        harness::case::os(&exe),
         harness::case::os(&bad_same_name),
         harness::case::os(&good_a),
         harness::case::os(&missing_path),
@@ -536,11 +532,11 @@ fn dynamic_trace_without_search_context_still_emits_missing() {
 
     let args = vec![
         OsString::from("run"),
-        harness::case::os(&exe),
         OsString::from("--cwd"),
         harness::case::os(&app_dir),
         OsString::from("--loader-snaps"),
         OsString::from("--trace"),
+        harness::case::os(&exe),
     ];
     let result = harness::run_loadwhat::run_public_with_env(
         &paths,

@@ -31,11 +31,10 @@ fn dynamic_multiple_candidates_discard_optional_failure_after_later_success() {
 
     let args = vec![
         OsString::from("run"),
-        harness::case::os(&exe),
         OsString::from("--cwd"),
         harness::case::os(&app_dir),
         OsString::from("--loader-snaps"),
-        OsString::from("--"),
+        harness::case::os(&exe),
         OsString::from("lwtest_optional.dll"),
         harness::case::os(&optional_good),
         OsString::from("lwtest_required.dll"),

@@ -5,7 +5,7 @@
 ## Current commands
 
 ```text
-loadwhat run <exe_path> [--cwd <dir>] [--timeout-ms <n>] [--loader-snaps] [--trace|--summary] [-v|--verbose] [-- <args...>]
+loadwhat run [--cwd <dir>] [--timeout <n>] [--no-loader-snaps] [--trace|--summary] [-v|--verbose] <exe_path> [args...]
 loadwhat imports <exe_or_dll> [--cwd <dir>]
 ```
 
@@ -35,7 +35,7 @@ target\release\loadwhat.exe
 
 `run` Phase B performs direct import diagnosis and an always-on recursive missing-dependency walk (transitive missing detection).
 
-With `--loader-snaps`, `loadwhat` can heuristically infer handled dynamic `LoadLibrary*` failures from loader-snaps debug strings and emit `DYNAMIC_MISSING`. When multiple dynamic-failure candidates are observed in one run, `loadwhat` prefers the earliest unresolved app-relevant failure and ignores candidates for DLLs that later load successfully. See `docs/loadwhat_spec_v1.md` for the authoritative selection rules.
+By default, `loadwhat` enables loader-snaps Phase C and can heuristically infer handled dynamic `LoadLibrary*` failures from loader-snaps debug strings and emit `DYNAMIC_MISSING`. Use `--no-loader-snaps` to disable that phase. When multiple dynamic-failure candidates are observed in one run, `loadwhat` prefers the earliest unresolved app-relevant failure and ignores candidates for DLLs that later load successfully. See `docs/loadwhat_spec_v1.md` for the authoritative selection rules.
 Loader-snaps setup uses best-effort `PEB->NtGlobalFlag` enable with Windows version/build detection to pick the x64 offset.
 
 ## Token style
@@ -73,13 +73,25 @@ Run with default summary output:
 Run with full trace output:
 
 ```powershell
-.\target\release\loadwhat.exe run C:\path\to\myapp.exe --trace
+.\target\release\loadwhat.exe run --trace C:\path\to\myapp.exe
 ```
 
-Run with loader-snaps and verbose trace output:
+Run with verbose trace output:
 
 ```powershell
-.\target\release\loadwhat.exe run C:\Windows\System32\notepad.exe --loader-snaps -v
+.\target\release\loadwhat.exe run -v C:\Windows\System32\notepad.exe
+```
+
+Run with target arguments:
+
+```powershell
+.\target\release\loadwhat.exe run --verbose C:\path\to\myapp.exe --mode test --threads 4
+```
+
+Disable loader-snaps Phase C:
+
+```powershell
+.\target\release\loadwhat.exe run --no-loader-snaps C:\path\to\myapp.exe
 ```
 
 Scan imports offline (including recursive missing-dependency walk):

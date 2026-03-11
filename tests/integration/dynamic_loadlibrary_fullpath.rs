@@ -25,11 +25,10 @@ fn dynamic_loadlibrary_fullpath_reports_transitive_missing_dll() {
 
     let args = vec![
         OsString::from("run"),
-        harness::case::os(&exe),
         OsString::from("--cwd"),
         harness::case::os(&app_dir),
         OsString::from("--loader-snaps"),
-        OsString::from("--"),
+        harness::case::os(&exe),
         harness::case::os(&dll_path),
     ];
     let result = harness::run_loadwhat::run(&paths, case.root(), &args, Duration::from_secs(20))
@@ -69,10 +68,9 @@ fn dynamic_loadlibrary_fullpath_loads_requested_root_but_resolves_deps_by_name()
 
     let args = vec![
         OsString::from("run"),
-        harness::case::os(&exe),
         OsString::from("--cwd"),
         harness::case::os(&app_dir),
-        OsString::from("--"),
+        harness::case::os(&exe),
         harness::case::os(&dll_path),
     ];
     let result = harness::run_loadwhat::run(&paths, case.root(), &args, Duration::from_secs(20))

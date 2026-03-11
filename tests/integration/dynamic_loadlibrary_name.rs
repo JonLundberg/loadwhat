@@ -28,9 +28,9 @@ fn dynamic_loadlibrary_name_uses_target_cwd_search() {
 
     let args = vec![
         OsString::from("run"),
-        harness::case::os(&exe),
         OsString::from("--cwd"),
         harness::case::os(&cwd_dir),
+        harness::case::os(&exe),
     ];
     let result = harness::run_loadwhat::run(&paths, case.root(), &args, Duration::from_secs(20))
         .expect("failed to run loadwhat");

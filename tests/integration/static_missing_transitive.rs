@@ -22,10 +22,10 @@ fn static_missing_transitive() {
 
     let args = vec![
         OsString::from("run"),
-        harness::case::os(&exe),
         OsString::from("--cwd"),
         harness::case::os(&app_dir),
         OsString::from("--loader-snaps"),
+        harness::case::os(&exe),
     ];
     let result = harness::run_loadwhat::run(&paths, case.root(), &args, Duration::from_secs(20))
         .expect("failed to run loadwhat");

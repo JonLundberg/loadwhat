@@ -12,7 +12,7 @@ This document is guidance for coding agents working in this repository.
 Current supported commands:
 
 ```text
-loadwhat run <exe_path> [--cwd <dir>] [--timeout-ms <n>] [--loader-snaps] [-v|--verbose] [-- <args...>]
+loadwhat run [--cwd <dir>] [--timeout <n>] [--no-loader-snaps] [-v|--verbose] <exe_path> [args...]
 loadwhat imports <exe_or_dll> [--cwd <dir>]
 ```
 

@@ -15,8 +15,13 @@ This document is the source of truth for current implemented behavior.
 ### Primary workflow
 
 ```text
-loadwhat run <exe_path> [--cwd <dir>] [--timeout-ms <n>] [--loader-snaps] [--trace|--summary] [-v|--verbose] [-- <args...>]
+loadwhat run [--cwd <dir>] [--timeout <n>] [--no-loader-snaps] [--trace|--summary] [-v|--verbose] <exe_path> [args...]
 ```
+
+- Run options must appear before `<exe_path>`.
+- `<exe_path>` is the first positional argument after `run`.
+- All arguments after `<exe_path>` are passed unchanged to the target process.
+- Loader-snaps Phase C is enabled by default; use `--no-loader-snaps` to disable it.
 
 ### Helpers
 
@@ -105,9 +110,9 @@ Output contract change:
 - For transitive missing, allow optional fields on `STATIC_MISSING`:
   - `via="parent.dll"` and `depth=<n>`.
 
-### Phase C: dynamic missing inference (`--loader-snaps`)
+### Phase C: dynamic missing inference (loader-snaps; enabled by default)
 
-When `--loader-snaps` is enabled and static diagnosis did not already report a missing/bad direct import, `loadwhat` may infer a dynamic `LoadLibrary*` failure from loader-snaps debug strings.
+When loader-snaps is enabled (the default for `run`; disable with `--no-loader-snaps`) and static diagnosis did not already report a missing/bad direct import, `loadwhat` may infer a dynamic `LoadLibrary*` failure from loader-snaps debug strings.
 
 When inference succeeds:
 
@@ -148,9 +153,9 @@ Purpose:
 - avoid replacing an earlier app-local failure with a later incidental framework load event
 - emit at most one summary diagnosis, representing the highest-ranked unresolved dynamic failure candidate after Phase C filtering and selection
 
-## 3) Loader Snaps mode (`run --loader-snaps`)
+## 3) Loader Snaps mode (enabled by default for `run`)
 
-When `--loader-snaps` is present:
+When loader-snaps is enabled (the default for `run`; disable with `--no-loader-snaps`):
 
 1. Preferred: enable `FLG_SHOW_LDR_SNAPS` (`0x00000002`) process-locally by setting `PEB->NtGlobalFlag |= 0x2`.
 2. Fallback: set IFEO `GlobalFlag` under

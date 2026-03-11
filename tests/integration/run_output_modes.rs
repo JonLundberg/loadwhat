@@ -40,9 +40,9 @@ fn run_summary_emits_single_static_missing_line() {
 
     let args = vec![
         OsString::from("run"),
-        harness::case::os(&exe),
         OsString::from("--cwd"),
         harness::case::os(&app_dir),
+        harness::case::os(&exe),
     ];
     let result =
         harness::run_loadwhat::run_public(&paths, case.root(), &args, Duration::from_secs(20))
@@ -97,9 +97,9 @@ fn run_summary_emits_transitive_static_missing_with_via_and_depth() {
 
     let args = vec![
         OsString::from("run"),
-        harness::case::os(&exe),
         OsString::from("--cwd"),
         harness::case::os(&app_dir),
+        harness::case::os(&exe),
     ];
     let result =
         harness::run_loadwhat::run_public(&paths, case.root(), &args, Duration::from_secs(20))
@@ -155,9 +155,9 @@ fn run_summary_emits_success_line() {
 
     let args = vec![
         OsString::from("run"),
-        harness::case::os(&exe),
         OsString::from("--cwd"),
         harness::case::os(&app_dir),
+        harness::case::os(&exe),
     ];
     let result =
         harness::run_loadwhat::run_public(&paths, case.root(), &args, Duration::from_secs(20))
@@ -194,10 +194,10 @@ fn run_trace_emits_detailed_lines() {
 
     let args = vec![
         OsString::from("run"),
-        harness::case::os(&exe),
         OsString::from("--cwd"),
         harness::case::os(&app_dir),
         OsString::from("--trace"),
+        harness::case::os(&exe),
     ];
     let result =
         harness::run_loadwhat::run_public(&paths, case.root(), &args, Duration::from_secs(20))
