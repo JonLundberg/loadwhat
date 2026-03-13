@@ -427,7 +427,7 @@ fn try_is_wow64_process2(process: Handle) -> Result<Option<bool>, u32> {
         return Ok(None);
     }
 
-    let proc = unsafe { GetProcAddress(kernel, b"IsWow64Process2\0".as_ptr()) };
+    let proc = unsafe { GetProcAddress(kernel, c"IsWow64Process2".as_ptr().cast()) };
     if proc.is_null() {
         return Ok(None);
     }

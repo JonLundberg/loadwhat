@@ -102,7 +102,7 @@ fn run_command(opts: RunOptions) -> i32 {
                         if trace_mode {
                             emit(
                                 TOKEN_NOTE,
-                                &vec![
+                                &[
                                     field("topic", quote("loader-snaps")),
                                     field("detail", quote("enable-failed")),
                                     field("code", hex_u32(code)),
@@ -117,7 +117,7 @@ fn run_command(opts: RunOptions) -> i32 {
                     emit_loader_snaps_peb_note(peb_info);
                     emit(
                         TOKEN_NOTE,
-                        &vec![
+                        &[
                             field("topic", quote("loader-snaps")),
                             field("detail", quote("peb-enable-failed")),
                             field("code", hex_u32(peb_code)),
@@ -140,7 +140,7 @@ fn run_command(opts: RunOptions) -> i32 {
                 if trace_mode {
                     emit(
                         TOKEN_NOTE,
-                        &vec![
+                        &[
                             field("topic", quote("loader-snaps")),
                             field("detail", quote("wow64-target-unsupported")),
                             field(
@@ -172,7 +172,7 @@ fn run_command(opts: RunOptions) -> i32 {
             if trace_mode {
                 emit(
                     TOKEN_NOTE,
-                    &vec![
+                    &[
                         field("topic", quote("loader-snaps")),
                         field("detail", quote("restore-failed")),
                         field("code", hex_u32(code)),
@@ -196,7 +196,7 @@ fn run_command(opts: RunOptions) -> i32 {
             if trace_mode {
                 emit(
                     TOKEN_NOTE,
-                    &vec![
+                    &[
                         field("topic", quote("loader-snaps")),
                         field("detail", quote("wow64-target-unsupported")),
                         field(
@@ -306,7 +306,7 @@ fn run_command(opts: RunOptions) -> i32 {
                             ResolutionKind::BadImage => {
                                 emit(
                                     TOKEN_STATIC_BAD_IMAGE,
-                                    &vec![
+                                    &[
                                         field("module", quote(&issue.module)),
                                         field("dll", quote(&issue.dll)),
                                         field("reason", quote("BAD_IMAGE")),
@@ -319,7 +319,7 @@ fn run_command(opts: RunOptions) -> i32 {
                     } else if opts.verbose {
                         emit(
                             TOKEN_FIRST_BREAK,
-                            &vec![
+                            &[
                                 field(
                                     "observed_exit_kind",
                                     quote(match outcome.end_kind {
@@ -343,7 +343,7 @@ fn run_command(opts: RunOptions) -> i32 {
                     } else {
                         emit(
                             TOKEN_SEARCH_ORDER,
-                            &vec![field("safedll", if report.safedll { "1" } else { "0" })],
+                            &[field("safedll", if report.safedll { "1" } else { "0" })],
                         );
                         match issue.kind {
                             ResolutionKind::Missing => {
@@ -361,7 +361,7 @@ fn run_command(opts: RunOptions) -> i32 {
                             ResolutionKind::BadImage => {
                                 emit(
                                     TOKEN_STATIC_BAD_IMAGE,
-                                    &vec![
+                                    &[
                                         field("module", quote(&issue.module)),
                                         field("dll", quote(&issue.dll)),
                                         field("reason", quote("BAD_IMAGE")),
@@ -373,7 +373,7 @@ fn run_command(opts: RunOptions) -> i32 {
                         for candidate in &issue.candidates {
                             emit(
                                 TOKEN_SEARCH_PATH,
-                                &vec![
+                                &[
                                     field("dll", quote(&issue.dll)),
                                     field("order", candidate.order.to_string()),
                                     field("path", quote(&display_path(&candidate.path))),
@@ -388,7 +388,7 @@ fn run_command(opts: RunOptions) -> i32 {
                 if trace_mode && opts.verbose {
                     emit(
                         TOKEN_NOTE,
-                        &vec![field(
+                        &[field(
                             "detail",
                             quote(&format!("static diagnosis failed: {err}")),
                         )],
@@ -426,7 +426,7 @@ fn run_command(opts: RunOptions) -> i32 {
                 if let Ok(context) = dynamic_trace_search_context(app_dir, &cwd) {
                     emit(
                         TOKEN_SEARCH_ORDER,
-                        &vec![field("safedll", if context.safedll { "1" } else { "0" })],
+                        &[field("safedll", if context.safedll { "1" } else { "0" })],
                     );
 
                     let mut fields = vec![
@@ -442,7 +442,7 @@ fn run_command(opts: RunOptions) -> i32 {
                     for candidate in &resolution.candidates {
                         emit(
                             TOKEN_SEARCH_PATH,
-                            &vec![
+                            &[
                                 field("dll", quote(&dm.dll)),
                                 field("order", candidate.order.to_string()),
                                 field("path", quote(&display_path(&candidate.path))),
@@ -510,7 +510,7 @@ fn run_command(opts: RunOptions) -> i32 {
     };
 
     if summary_mode && !summary_line_emitted && code == 0 {
-        emit(TOKEN_SUCCESS, &vec![field("status", "0")]);
+        emit(TOKEN_SUCCESS, &[field("status", "0")]);
     }
 
     code
@@ -571,7 +571,7 @@ fn imports_command(opts: ImportsOptions) -> i32 {
 fn emit_run_events(exe_path: &Path, cwd: &Path, outcome: &RunOutcome) {
     emit(
         TOKEN_RUN_START,
-        &vec![
+        &[
             field("exe", quote(&display_path(exe_path))),
             field("cwd", quote(&display_path(cwd))),
             field("pid", outcome.pid.to_string()),
@@ -583,7 +583,7 @@ fn emit_run_events(exe_path: &Path, cwd: &Path, outcome: &RunOutcome) {
             RuntimeEvent::RuntimeLoaded(module) => {
                 emit(
                     TOKEN_RUNTIME_LOADED,
-                    &vec![
+                    &[
                         field("pid", outcome.pid.to_string()),
                         field("dll", quote(&module.dll_name)),
                         field(
@@ -603,7 +603,7 @@ fn emit_run_events(exe_path: &Path, cwd: &Path, outcome: &RunOutcome) {
             RuntimeEvent::DebugString(debug) => {
                 emit(
                     TOKEN_DEBUG_STRING,
-                    &vec![
+                    &[
                         field("pid", debug.pid.to_string()),
                         field("tid", debug.tid.to_string()),
                         field("source", quote("OUTPUT_DEBUG_STRING_EVENT")),
@@ -626,7 +626,7 @@ fn emit_run_events(exe_path: &Path, cwd: &Path, outcome: &RunOutcome) {
         .unwrap_or_else(|| "0x00000000".to_string());
     emit(
         TOKEN_RUN_END,
-        &vec![
+        &[
             field("pid", outcome.pid.to_string()),
             field("exit_kind", quote(exit_kind)),
             field("code", code),
@@ -642,7 +642,7 @@ fn emit_loader_snaps_peb_note(info: PebEnableInfo) {
     };
     emit(
         TOKEN_NOTE,
-        &vec![
+        &[
             field("topic", quote("loader-snaps")),
             field("detail", quote("peb-ntglobalflag")),
             field("os", quote(&os)),
@@ -709,14 +709,14 @@ fn diagnose_static_imports(
     if matches!(emit_mode, StaticEmitMode::Full) {
         emit(
             TOKEN_STATIC_START,
-            &vec![
+            &[
                 field("module", quote(&display_path(module_path))),
                 field("scope", quote("direct-and-recursive-imports")),
             ],
         );
         emit(
             TOKEN_SEARCH_ORDER,
-            &vec![field("safedll", if context.safedll { "1" } else { "0" })],
+            &[field("safedll", if context.safedll { "1" } else { "0" })],
         );
     }
 
@@ -755,7 +755,7 @@ fn diagnose_static_imports(
             if matches!(emit_mode, StaticEmitMode::Full) {
                 emit(
                     TOKEN_STATIC_IMPORT,
-                    &vec![
+                    &[
                         field("module", quote(&node.module_name)),
                         field("needs", quote(&dll)),
                     ],
@@ -766,7 +766,7 @@ fn diagnose_static_imports(
                 if matches!(emit_mode, StaticEmitMode::Full) {
                     emit(
                         TOKEN_STATIC_FOUND,
-                        &vec![
+                        &[
                             field("module", quote(&node.module_name)),
                             field("dll", quote(&dll)),
                             field("reason", quote("RUNTIME_OBSERVED")),
@@ -789,7 +789,7 @@ fn diagnose_static_imports(
                 for candidate in &resolution.candidates {
                     emit(
                         TOKEN_SEARCH_PATH,
-                        &vec![
+                        &[
                             field("dll", quote(&dll)),
                             field("order", candidate.order.to_string()),
                             field("path", quote(&display_path(&candidate.path))),
@@ -804,7 +804,7 @@ fn diagnose_static_imports(
                     if matches!(emit_mode, StaticEmitMode::Full) {
                         emit(
                             TOKEN_STATIC_FOUND,
-                            &vec![
+                            &[
                                 field("module", quote(&node.module_name)),
                                 field("dll", quote(&dll)),
                                 field(
@@ -874,7 +874,7 @@ fn diagnose_static_imports(
                     if matches!(emit_mode, StaticEmitMode::Full) {
                         emit(
                             TOKEN_STATIC_BAD_IMAGE,
-                            &vec![
+                            &[
                                 field("module", quote(&node.module_name)),
                                 field("dll", quote(&dll)),
                                 field("reason", quote("BAD_IMAGE")),
@@ -896,7 +896,7 @@ fn diagnose_static_imports(
     if matches!(emit_mode, StaticEmitMode::Full) {
         emit(
             TOKEN_NOTE,
-            &vec![field(
+            &[field(
                 "detail",
                 quote(
                     "KnownDLLs/SxS/SetDllDirectory/AddDllDirectory/alternate loader search not modeled in v1",
@@ -905,7 +905,7 @@ fn diagnose_static_imports(
         );
         emit(
             TOKEN_STATIC_END,
-            &vec![field("module", quote(&display_path(module_path)))],
+            &[field("module", quote(&display_path(module_path)))],
         );
     }
 
@@ -1052,14 +1052,14 @@ fn emit_lwtest_lines(modules: &[LoadedModule], missing_name: Option<&str>, exit_
         };
         emit(
             "LWTEST:LOAD",
-            &vec![field("name", dll_name), field("path", display_path(path))],
+            &[field("name", dll_name), field("path", display_path(path))],
         );
     }
 
     if let Some(name) = missing_name {
         emit(
             "LWTEST:RESULT",
-            &vec![
+            &[
                 field("kind", "missing_dll"),
                 field("name", name.to_ascii_lowercase()),
             ],
@@ -1067,7 +1067,7 @@ fn emit_lwtest_lines(modules: &[LoadedModule], missing_name: Option<&str>, exit_
     }
 
     if let Some(code) = exit_code {
-        emit("LWTEST:TARGET", &vec![field("exit_code", code.to_string())]);
+        emit("LWTEST:TARGET", &[field("exit_code", code.to_string())]);
     }
 }
 
@@ -1606,10 +1606,11 @@ fn extract_dll_basenames(text_lower: &str) -> Vec<String> {
             })
             .to_string();
 
-        if !basename.is_empty() && basename.ends_with(".dll") {
-            if !out.iter().any(|v| v == &basename) {
-                out.push(basename);
-            }
+        if !basename.is_empty()
+            && basename.ends_with(".dll")
+            && !out.iter().any(|v| v == &basename)
+        {
+            out.push(basename);
         }
 
         offset = dll_end;
