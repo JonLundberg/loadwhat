@@ -499,15 +499,10 @@ fn run_command(opts: RunOptions) -> i32 {
         );
     }
 
-    let code = if static_missing_count + static_bad_image_count + dynamic_missing_count > 0 {
-        10
-    } else {
-        match outcome.end_kind {
-            RunEndKind::ExitProcess if outcome.exit_code == Some(0) => 0,
-            RunEndKind::Timeout if !outcome.loaded_modules.is_empty() => 0,
-            RunEndKind::ExitProcess | RunEndKind::Exception | RunEndKind::Timeout => 21,
-        }
-    };
+    let code = run_result_code(
+        &outcome,
+        static_missing_count + static_bad_image_count + dynamic_missing_count,
+    );
 
     if summary_mode && !summary_line_emitted && code == 0 {
         emit(TOKEN_SUCCESS, &[field("status", "0")]);
@@ -895,15 +890,6 @@ fn diagnose_static_imports(
 
     if matches!(emit_mode, StaticEmitMode::Full) {
         emit(
-            TOKEN_NOTE,
-            &[field(
-                "detail",
-                quote(
-                    "KnownDLLs/SxS/SetDllDirectory/AddDllDirectory/alternate loader search not modeled in v1",
-                ),
-            )],
-        );
-        emit(
             TOKEN_STATIC_END,
             &[field("module", quote(&display_path(module_path)))],
         );
@@ -987,6 +973,19 @@ fn prefer_runtime_observed_path(candidate: &Path, existing: &Path) -> bool {
     let candidate_key = normalize_module_visit_key(candidate);
     let existing_key = normalize_module_visit_key(existing);
     (candidate_key.len(), candidate_key.as_str()) < (existing_key.len(), existing_key.as_str())
+}
+
+#[cfg(windows)]
+fn run_result_code(outcome: &RunOutcome, diagnosis_count: usize) -> i32 {
+    if diagnosis_count > 0 {
+        return 10;
+    }
+
+    match outcome.end_kind {
+        RunEndKind::ExitProcess if outcome.exit_code == Some(0) => 0,
+        RunEndKind::Timeout if !outcome.loaded_modules.is_empty() => 0,
+        RunEndKind::ExitProcess | RunEndKind::Exception | RunEndKind::Timeout => 21,
+    }
 }
 
 #[cfg(windows)]
@@ -1606,9 +1605,7 @@ fn extract_dll_basenames(text_lower: &str) -> Vec<String> {
             })
             .to_string();
 
-        if !basename.is_empty()
-            && basename.ends_with(".dll")
-            && !out.iter().any(|v| v == &basename)
+        if !basename.is_empty() && basename.ends_with(".dll") && !out.iter().any(|v| v == &basename)
         {
             out.push(basename);
         }
@@ -1769,6 +1766,46 @@ mod static_diagnosis_tests {
     fn does_not_ignore_normal_import_names() {
         assert!(!is_api_set_dll("kernel32.dll"));
         assert!(!is_api_set_dll("lwtest_a.dll"));
+    }
+}
+
+#[cfg(all(test, windows))]
+mod run_result_tests {
+    use super::*;
+
+    fn outcome(end_kind: RunEndKind, loaded_modules: usize, exit_code: Option<u32>) -> RunOutcome {
+        RunOutcome {
+            pid: 1,
+            runtime_events: Vec::new(),
+            loaded_modules: (0..loaded_modules)
+                .map(|idx| LoadedModule {
+                    dll_name: format!("mod{idx}.dll"),
+                    path: None,
+                    base: idx,
+                })
+                .collect(),
+            loader_snaps_peb: None,
+            end_kind,
+            exit_code,
+            exception_code: None,
+            elapsed_ms: 1,
+        }
+    }
+
+    #[test]
+    fn timeout_without_runtime_progress_returns_non_diagnostic_failure() {
+        assert_eq!(
+            run_result_code(&outcome(RunEndKind::Timeout, 0, None), 0),
+            21
+        );
+    }
+
+    #[test]
+    fn timeout_after_runtime_progress_keeps_current_success_like_exit_code() {
+        assert_eq!(
+            run_result_code(&outcome(RunEndKind::Timeout, 1, None), 0),
+            0
+        );
     }
 }
 

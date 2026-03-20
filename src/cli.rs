@@ -397,8 +397,7 @@ mod tests {
 
     #[test]
     fn imports_unknown_option_reports_error() {
-        let err =
-            parse_from(["loadwhat", "imports", r"C:\tool\app.exe", "--bogus"]).unwrap_err();
+        let err = parse_from(["loadwhat", "imports", r"C:\tool\app.exe", "--bogus"]).unwrap_err();
         assert!(err.contains("unknown imports option: --bogus"));
     }
 

@@ -183,3 +183,271 @@ fn read_u32(data: &[u8], offset: usize) -> Result<u32, String> {
         .ok_or_else(|| "unexpected EOF".to_string())?;
     Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const PE_OFFSET: usize = 0x80;
+    const OPTIONAL_HEADER_SIZE: u16 = 0xF0;
+    const SECTION_TABLE_OFFSET: usize = PE_OFFSET + 24 + OPTIONAL_HEADER_SIZE as usize;
+    const OPTIONAL_HEADER_OFFSET: usize = PE_OFFSET + 24;
+    const DATA_DIR_START: usize = OPTIONAL_HEADER_OFFSET + 112;
+    const IMPORT_DIRECTORY_RVA_OFFSET: usize = DATA_DIR_START + 8;
+    const NUMBER_OF_SECTIONS_OFFSET: usize = PE_OFFSET + 6;
+    const SIZE_OF_OPTIONAL_HEADER_OFFSET: usize = PE_OFFSET + 20;
+    const SECTION_VIRTUAL_ADDRESS: u32 = 0x1000;
+    const SECTION_RAW_DATA_PTR: u32 = 0x200;
+
+    struct BuiltPe {
+        bytes: Vec<u8>,
+        descriptor_offsets: Vec<usize>,
+        name_offsets: Vec<usize>,
+    }
+
+    fn build_test_pe(imports: &[&str]) -> BuiltPe {
+        let descriptor_bytes = (imports.len() + 1) * 20;
+        let strings_bytes: usize = imports.iter().map(|name| name.len() + 1).sum();
+        let section_size = descriptor_bytes.max(1) + strings_bytes.max(1);
+        let total_len = SECTION_RAW_DATA_PTR as usize + section_size;
+        let mut bytes = vec![0u8; total_len];
+
+        bytes[0..2].copy_from_slice(b"MZ");
+        write_u32(&mut bytes, 0x3C, PE_OFFSET as u32);
+
+        bytes[PE_OFFSET..PE_OFFSET + 4].copy_from_slice(b"PE\0\0");
+        write_u16(&mut bytes, PE_OFFSET + 4, 0x8664);
+        write_u16(&mut bytes, NUMBER_OF_SECTIONS_OFFSET, 1);
+        write_u16(
+            &mut bytes,
+            SIZE_OF_OPTIONAL_HEADER_OFFSET,
+            OPTIONAL_HEADER_SIZE,
+        );
+
+        write_u16(&mut bytes, OPTIONAL_HEADER_OFFSET, 0x020B);
+        write_u32(
+            &mut bytes,
+            IMPORT_DIRECTORY_RVA_OFFSET,
+            if imports.is_empty() {
+                0
+            } else {
+                SECTION_VIRTUAL_ADDRESS
+            },
+        );
+        write_u32(&mut bytes, DATA_DIR_START + 12, descriptor_bytes as u32);
+
+        bytes[SECTION_TABLE_OFFSET..SECTION_TABLE_OFFSET + 6].copy_from_slice(b".rdata");
+        write_u32(&mut bytes, SECTION_TABLE_OFFSET + 8, section_size as u32);
+        write_u32(
+            &mut bytes,
+            SECTION_TABLE_OFFSET + 12,
+            SECTION_VIRTUAL_ADDRESS,
+        );
+        write_u32(&mut bytes, SECTION_TABLE_OFFSET + 16, section_size as u32);
+        write_u32(&mut bytes, SECTION_TABLE_OFFSET + 20, SECTION_RAW_DATA_PTR);
+
+        let mut descriptor_offsets = Vec::new();
+        let mut name_offsets = Vec::new();
+        let mut string_cursor = SECTION_RAW_DATA_PTR as usize + descriptor_bytes;
+        for (idx, import) in imports.iter().enumerate() {
+            let descriptor_offset = SECTION_RAW_DATA_PTR as usize + idx * 20;
+            let name_rva =
+                SECTION_VIRTUAL_ADDRESS + (string_cursor - SECTION_RAW_DATA_PTR as usize) as u32;
+            write_u32(&mut bytes, descriptor_offset + 12, name_rva);
+            descriptor_offsets.push(descriptor_offset);
+            name_offsets.push(string_cursor);
+
+            bytes[string_cursor..string_cursor + import.len()].copy_from_slice(import.as_bytes());
+            string_cursor += import.len();
+            bytes[string_cursor] = 0;
+            string_cursor += 1;
+        }
+
+        BuiltPe {
+            bytes,
+            descriptor_offsets,
+            name_offsets,
+        }
+    }
+
+    fn write_u16(bytes: &mut [u8], offset: usize, value: u16) {
+        bytes[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
+    }
+
+    fn write_u32(bytes: &mut [u8], offset: usize, value: u32) {
+        bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+    }
+
+    #[test]
+    fn rejects_file_too_small_for_dos_header() {
+        assert_eq!(
+            direct_imports_from_bytes(&[0u8; 16]).unwrap_err(),
+            "file too small for DOS header"
+        );
+    }
+
+    #[test]
+    fn rejects_missing_mz_header() {
+        let mut pe = build_test_pe(&[]);
+        pe.bytes[0..2].copy_from_slice(b"NZ");
+        assert_eq!(
+            direct_imports_from_bytes(&pe.bytes).unwrap_err(),
+            "missing MZ header"
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_pe_header_offset() {
+        let mut pe = build_test_pe(&[]);
+        let len = pe.bytes.len() as u32;
+        write_u32(&mut pe.bytes, 0x3C, len);
+        assert_eq!(
+            direct_imports_from_bytes(&pe.bytes).unwrap_err(),
+            "invalid PE header offset"
+        );
+    }
+
+    #[test]
+    fn rejects_missing_pe_signature() {
+        let mut pe = build_test_pe(&[]);
+        pe.bytes[PE_OFFSET..PE_OFFSET + 4].copy_from_slice(b"PX\0\0");
+        assert_eq!(
+            direct_imports_from_bytes(&pe.bytes).unwrap_err(),
+            "missing PE signature"
+        );
+    }
+
+    #[test]
+    fn rejects_truncated_optional_header() {
+        let pe = build_test_pe(&[]);
+        let truncated = &pe.bytes[..OPTIONAL_HEADER_OFFSET + OPTIONAL_HEADER_SIZE as usize - 1];
+        assert_eq!(
+            direct_imports_from_bytes(truncated).unwrap_err(),
+            "truncated optional header"
+        );
+    }
+
+    #[test]
+    fn rejects_unsupported_optional_header_magic() {
+        let mut pe = build_test_pe(&[]);
+        write_u16(&mut pe.bytes, OPTIONAL_HEADER_OFFSET, 0x1234);
+        assert_eq!(
+            direct_imports_from_bytes(&pe.bytes).unwrap_err(),
+            "unsupported optional header format"
+        );
+    }
+
+    #[test]
+    fn rejects_missing_data_directories() {
+        let mut pe = build_test_pe(&[]);
+        write_u16(&mut pe.bytes, SIZE_OF_OPTIONAL_HEADER_OFFSET, 120);
+        assert_eq!(
+            direct_imports_from_bytes(&pe.bytes).unwrap_err(),
+            "optional header missing data directories"
+        );
+    }
+
+    #[test]
+    fn rejects_truncated_section_table() {
+        let mut pe = build_test_pe(&[]);
+        write_u16(&mut pe.bytes, NUMBER_OF_SECTIONS_OFFSET, 2);
+        pe.bytes.truncate(SECTION_TABLE_OFFSET + 79);
+        assert_eq!(
+            direct_imports_from_bytes(&pe.bytes).unwrap_err(),
+            "truncated section table"
+        );
+    }
+
+    #[test]
+    fn rva_to_offset_returns_none_outside_sections() {
+        let sections = vec![Section {
+            virtual_address: 0x1000,
+            virtual_size: 0x200,
+            raw_data_ptr: 0x400,
+            raw_data_size: 0x100,
+        }];
+        assert_eq!(rva_to_offset(0x2000, &sections), None);
+    }
+
+    #[test]
+    fn rva_to_offset_uses_max_of_virtual_and_raw_size() {
+        let sections = vec![Section {
+            virtual_address: 0x1000,
+            virtual_size: 0x20,
+            raw_data_ptr: 0x400,
+            raw_data_size: 0x200,
+        }];
+        assert_eq!(rva_to_offset(0x1100, &sections), Some(0x500));
+    }
+
+    #[test]
+    fn rejects_import_table_rva_that_cannot_be_mapped() {
+        let mut pe = build_test_pe(&["a.dll"]);
+        write_u32(&mut pe.bytes, IMPORT_DIRECTORY_RVA_OFFSET, 0x5000);
+        assert_eq!(
+            direct_imports_from_bytes(&pe.bytes).unwrap_err(),
+            "invalid import table RVA"
+        );
+    }
+
+    #[test]
+    fn rejects_truncated_import_descriptor_table() {
+        let pe = build_test_pe(&["a.dll"]);
+        let truncated = &pe.bytes[..pe.descriptor_offsets[0] + 19];
+        assert_eq!(
+            direct_imports_from_bytes(truncated).unwrap_err(),
+            "truncated import descriptor table"
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_import_name_rva() {
+        let mut pe = build_test_pe(&["a.dll"]);
+        write_u32(&mut pe.bytes, pe.descriptor_offsets[0] + 12, 0x5000);
+        assert_eq!(
+            direct_imports_from_bytes(&pe.bytes).unwrap_err(),
+            "invalid import name RVA"
+        );
+    }
+
+    #[test]
+    fn rejects_unterminated_import_string() {
+        let pe = build_test_pe(&["a.dll"]);
+        let truncated = &pe.bytes[..pe.name_offsets[0] + "a.dll".len()];
+        assert_eq!(
+            direct_imports_from_bytes(truncated).unwrap_err(),
+            "unterminated import string"
+        );
+    }
+
+    #[test]
+    fn empty_import_table_returns_empty_list() {
+        let pe = build_test_pe(&[]);
+        assert_eq!(
+            direct_imports_from_bytes(&pe.bytes).unwrap(),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn duplicate_import_names_collapse_deterministically() {
+        let pe = build_test_pe(&["z.dll", "A.dll", "a.dll"]);
+        assert_eq!(
+            direct_imports_from_bytes(&pe.bytes).unwrap(),
+            vec!["a.dll".to_string(), "z.dll".to_string()]
+        );
+    }
+
+    #[test]
+    fn returned_imports_are_lexicographically_ordered() {
+        let pe = build_test_pe(&["kernel32.dll", "a.dll", "z.dll"]);
+        assert_eq!(
+            direct_imports_from_bytes(&pe.bytes).unwrap(),
+            vec![
+                "a.dll".to_string(),
+                "kernel32.dll".to_string(),
+                "z.dll".to_string(),
+            ]
+        );
+    }
+}

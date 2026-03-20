@@ -44,9 +44,10 @@ Roadmap-only features are documented in `docs/roadmap.md` and are not part of th
 ### Output mode policy
 
 - Default mode is summary mode.
-- Summary mode emits exactly one token line for `run`:
+- Summary mode emits exactly one token line for `run` when `loadwhat` reaches a public diagnosis or success-like completion:
   - `STATIC_MISSING ...`, `STATIC_BAD_IMAGE ...`, or `DYNAMIC_MISSING ...` when a first break is diagnosed
-  - `SUCCESS status=0` when startup succeeds and no load issue is diagnosed
+  - `SUCCESS status=0` when startup succeeds, or when a timeout occurs after runtime module-load progress, and no load issue is diagnosed
+- A non-diagnostic failure such as a timeout before meaningful runtime progress may exit `21` with no public token output.
 - Summary mode suppresses trace-style token lines (`SEARCH_ORDER`, `SEARCH_PATH`, `NOTE`, runtime timeline tokens).
 - `--trace` enables detailed diagnostic trace output.
 - `-v` or `--verbose` enables verbose runtime event output (`RUN_START`, `RUNTIME_LOADED`, `DEBUG_STRING`, `RUN_END`) and extended static diagnosis output (`STATIC_*`, `SEARCH_*`, `FIRST_BREAK`, `SUMMARY`).
@@ -143,6 +144,8 @@ When `SEARCH_ORDER` / `SEARCH_PATH` are emitted for a dynamic failure, they are 
 
 Phase C is heuristic and is based on loader-snaps debug strings captured through `OUTPUT_DEBUG_STRING_EVENT`; it does not observe `LoadLibrary*` return values directly.
 
+v1 does not define a separate post-startup suppression boundary for Phase C. Dynamic load failures later in the observed run may still be selected if they remain the highest-ranked unresolved candidate under the rules below.
+
 When multiple dynamic-failure candidates are present in one run, `loadwhat` selects a single `DYNAMIC_MISSING` result using these rules:
 
 1. Discard any candidate for a DLL that is later observed to load successfully in the same run.
@@ -188,6 +191,10 @@ Restoration is best effort for all terminal paths.
   - `NOTE topic="loader-snaps" detail="peb-ntglobalflag" os="major.minor.build|unknown" ntglobalflag_offset=0xBC`
 
 Failure behavior:
+
+- Summary mode omits loader-snaps setup and restore notes.
+- Trace mode may emit terminal setup/restore diagnostics such as `enable-failed`, `restore-failed`, and `wow64-target-unsupported`.
+- Verbose mode may additionally emit fallback-detail notes such as `peb-enable-failed`.
 
 - If both PEB enable and IFEO fallback fail:
 
@@ -300,10 +307,10 @@ Required token families in v1:
 
 ## 7) Exit codes
 
-- `0` = no issues detected
+- `0` = no issues detected, including the current success-like timeout path after runtime module-load progress
 - `10` = missing/bad image issue detected (`run` static/dynamic diagnosis or `imports`)
 - `20` = usage error
-- `21` = cannot launch/debug target (including loader-snaps setup failure)
+- `21` = cannot launch/debug target, or non-diagnostic failure without a public diagnosis token (including loader-snaps setup failure and timeout before meaningful runtime progress)
 - `22` = unsupported architecture
 
 ## 8) Constraints

@@ -344,6 +344,10 @@ pub fn get_windows_directory() -> Result<PathBuf, String> {
 }
 
 pub fn safe_dll_search_mode() -> bool {
+    if let Some(value) = test_safe_dll_search_mode_override() {
+        return value;
+    }
+
     let mut key: Hkey = 0;
     let path = to_wide(OsStr::new(
         r"SYSTEM\CurrentControlSet\Control\Session Manager",
@@ -385,6 +389,22 @@ pub fn safe_dll_search_mode() -> bool {
     } else {
         true
     }
+}
+
+#[cfg(debug_assertions)]
+fn test_safe_dll_search_mode_override() -> Option<bool> {
+    std::env::var("LOADWHAT_TEST_SAFE_DLL_SEARCH_MODE")
+        .ok()
+        .and_then(|value| match value.trim() {
+            "0" => Some(false),
+            "1" => Some(true),
+            _ => None,
+        })
+}
+
+#[cfg(not(debug_assertions))]
+fn test_safe_dll_search_mode_override() -> Option<bool> {
+    None
 }
 
 pub fn rtl_get_version() -> Option<OsVersion> {

@@ -69,6 +69,20 @@ pub fn run_target(
         )));
     }
 
+    if enable_loader_snaps_peb {
+        if let Some(result) = loader_snaps::test_peb_enable_override_result() {
+            match result {
+                Ok(_) => {}
+                Err(loader_snaps::PebEnableError::UnsupportedWow64) => {
+                    return Err(RunError::UnsupportedWow64Target);
+                }
+                Err(loader_snaps::PebEnableError::Win32 { code, info }) => {
+                    return Err(RunError::PebLoaderSnapsEnableFailed(info, code));
+                }
+            }
+        }
+    }
+
     let app_w = win::to_wide(exe_path.as_os_str());
     let command_line = build_command_line(exe_path, exe_args);
     let mut cmd_w = win::to_wide(OsStr::new(&command_line));
@@ -197,13 +211,12 @@ pub fn run_target(
             }
             win::OUTPUT_DEBUG_STRING_EVENT => {
                 let info = unsafe { event_data::<win::OutputDebugStringInfo>(&event) };
-                let text = read_output_debug_string(
+                let text = debug_string_text(read_output_debug_string(
                     pi.h_process,
                     info.lp_debug_string_data,
                     info.f_unicode != 0,
                     info.n_debug_string_length,
-                )
-                .unwrap_or_else(|| "UNREADABLE".to_string());
+                ));
 
                 runtime_events.push(RuntimeEvent::DebugString(DebugStringEvent {
                     pid: event.dw_process_id,
@@ -279,6 +292,10 @@ fn read_output_debug_string(
     unicode: bool,
     length_chars: u16,
 ) -> Option<String> {
+    if force_unreadable_debug_string() {
+        return None;
+    }
+
     if process.is_null() || data_ptr.is_null() {
         return None;
     }
@@ -341,6 +358,22 @@ fn read_output_debug_string(
     data.truncate(bytes_read.min(data.len()));
     let end = data.iter().position(|v| *v == 0).unwrap_or(data.len());
     Some(String::from_utf8_lossy(&data[..end]).to_string())
+}
+
+fn debug_string_text(value: Option<String>) -> String {
+    value.unwrap_or_else(|| "UNREADABLE".to_string())
+}
+
+#[cfg(debug_assertions)]
+fn force_unreadable_debug_string() -> bool {
+    std::env::var("LOADWHAT_TEST_FORCE_UNREADABLE_DEBUG_STRING")
+        .map(|value| value.trim() == "1")
+        .unwrap_or(false)
+}
+
+#[cfg(not(debug_assertions))]
+fn force_unreadable_debug_string() -> bool {
+    false
 }
 
 unsafe fn event_data<T: Copy>(event: &win::DebugEvent) -> T {
@@ -492,7 +525,7 @@ fn read_remote_ansi(process: win::Handle, mut ptr: *const std::ffi::c_void) -> O
 
 #[cfg(test)]
 mod tests {
-    use super::{run_target, RunError, RuntimeEvent};
+    use super::{debug_string_text, run_target, RunError, RuntimeEvent};
     use std::ffi::OsString;
     use std::path::PathBuf;
 
@@ -512,6 +545,15 @@ mod tests {
             }
             _ => panic!("expected missing-path RunError::Message"),
         }
+    }
+
+    #[test]
+    fn debug_string_text_uses_unreadable_fallback() {
+        assert_eq!(debug_string_text(None), "UNREADABLE");
+        assert_eq!(
+            debug_string_text(Some("visible".to_string())),
+            "visible".to_string()
+        );
     }
 
     #[test]

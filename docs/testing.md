@@ -67,7 +67,7 @@ These lines are for harness assertions and are not part of the public token cont
 
 Public CLI contract tests must use the public runners, which remove `LOADWHAT_TEST_MODE` from the spawned `loadwhat` process. Those tests must not depend on `LWTEST:` lines.
 
-Some integration tests may assert optional fields like `via`/`depth` on `STATIC_MISSING` for transitive missing dependencies, and may assert `NOTE` lines related to loader-snaps setup details.
+Some integration tests may assert optional fields like `via`/`depth` on `STATIC_MISSING` for transitive missing dependencies, and may assert `NOTE` lines related to loader-snaps setup details. Summary-mode tests must not expect loader-snaps setup/restore notes; those notes are trace-visible or verbose-only diagnostics.
 
 ## `run` CLI contract
 
@@ -82,3 +82,6 @@ loadwhat run [OPTIONS] <TARGET> [TARGET_ARGS...]
 - Loader-snaps is enabled by default; use `--no-loader-snaps` to disable it.
 - Summary output is the default; use `--trace` or `-v` for detail.
 - Tests that assert trace lines (`SEARCH_ORDER`, `SEARCH_PATH`, runtime timeline tokens, or loader-snaps notes) must pass `--trace` or `-v`.
+- The current timeout contract is explicit in tests and docs:
+  - timeout after runtime module-load progress returns `0`; summary mode emits `SUCCESS status=0`
+  - timeout before meaningful runtime progress returns `21` with no public summary token

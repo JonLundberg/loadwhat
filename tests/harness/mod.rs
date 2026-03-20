@@ -4,5 +4,6 @@ pub mod assert;
 pub mod case;
 pub mod fixture;
 pub mod paths;
+pub mod pe_builder;
 pub mod run_loadwhat;
 pub mod win_path;

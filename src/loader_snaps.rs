@@ -28,12 +28,17 @@ pub struct LoaderSnapsGuard {
     key_path: String,
     original_value: Option<(u32, Vec<u8>)>,
     restored: bool,
+    test_noop: bool,
 }
 
 impl LoaderSnapsGuard {
     pub fn enable_for_image(image_name: &str) -> Result<Self, u32> {
         if image_name.is_empty() {
             return Err(87);
+        }
+
+        if let Some(result) = test_ifeo_enable_override() {
+            return result;
         }
 
         let key_path = format!(r"{IFEO_BASE}\{image_name}");
@@ -62,11 +67,21 @@ impl LoaderSnapsGuard {
             key_path,
             original_value,
             restored: false,
+            test_noop: false,
         })
     }
 
     pub fn restore(&mut self) -> Result<(), u32> {
         if self.restored {
+            return Ok(());
+        }
+
+        if let Some(code) = test_ifeo_restore_override() {
+            return Err(code);
+        }
+
+        if self.test_noop {
+            self.restored = true;
             return Ok(());
         }
 
@@ -96,6 +111,10 @@ pub fn enable_via_peb(process: win::Handle) -> Result<PebEnableInfo, PebEnableEr
         os_version,
         ntglobalflag_offset: select_ntglobalflag_offset(os_version),
     };
+
+    if let Some(result) = test_peb_enable_override(info) {
+        return result;
+    }
 
     if process.is_null() {
         return Err(PebEnableError::Win32 {
@@ -147,6 +166,15 @@ pub fn enable_via_peb(process: win::Handle) -> Result<PebEnableInfo, PebEnableEr
     }
 
     Ok(info)
+}
+
+pub(crate) fn test_peb_enable_override_result() -> Option<Result<PebEnableInfo, PebEnableError>> {
+    let os_version = win::rtl_get_version();
+    let info = PebEnableInfo {
+        os_version,
+        ntglobalflag_offset: select_ntglobalflag_offset(os_version),
+    };
+    test_peb_enable_override(info)
 }
 
 fn select_ntglobalflag_offset(os_version: Option<win::OsVersion>) -> usize {
@@ -311,6 +339,82 @@ fn write_u32(process: win::Handle, address: win::Lpvoid, value: u32) -> Result<(
         return Err(ERROR_PARTIAL_COPY);
     }
     Ok(())
+}
+
+#[cfg(debug_assertions)]
+fn test_peb_enable_override(info: PebEnableInfo) -> Option<Result<PebEnableInfo, PebEnableError>> {
+    let value = std::env::var("LOADWHAT_TEST_PEB_ENABLE").ok()?;
+    let value = value.trim();
+    if value.eq_ignore_ascii_case("wow64") {
+        return Some(Err(PebEnableError::UnsupportedWow64));
+    }
+
+    parse_test_error_code(value)
+        .map(|code| Err(PebEnableError::Win32 { code, info }))
+        .or_else(|| {
+            if value.eq_ignore_ascii_case("ok") {
+                Some(Ok(info))
+            } else {
+                None
+            }
+        })
+}
+
+#[cfg(not(debug_assertions))]
+fn test_peb_enable_override(_info: PebEnableInfo) -> Option<Result<PebEnableInfo, PebEnableError>> {
+    None
+}
+
+#[cfg(debug_assertions)]
+fn test_ifeo_enable_override() -> Option<Result<LoaderSnapsGuard, u32>> {
+    let value = std::env::var("LOADWHAT_TEST_IFEO_ENABLE").ok()?;
+    let value = value.trim();
+    if value.eq_ignore_ascii_case("noop") || value.eq_ignore_ascii_case("ok-noop") {
+        return Some(Ok(LoaderSnapsGuard {
+            key_path: String::new(),
+            original_value: None,
+            restored: false,
+            test_noop: true,
+        }));
+    }
+
+    parse_test_error_code(value).map(Err)
+}
+
+#[cfg(not(debug_assertions))]
+fn test_ifeo_enable_override() -> Option<Result<LoaderSnapsGuard, u32>> {
+    None
+}
+
+#[cfg(debug_assertions)]
+fn test_ifeo_restore_override() -> Option<u32> {
+    std::env::var("LOADWHAT_TEST_IFEO_RESTORE")
+        .ok()
+        .and_then(|value| parse_test_error_code(value.trim()))
+}
+
+#[cfg(not(debug_assertions))]
+fn test_ifeo_restore_override() -> Option<u32> {
+    None
+}
+
+#[cfg(debug_assertions)]
+fn parse_test_error_code(value: &str) -> Option<u32> {
+    let trimmed = value.trim();
+    let raw = trimmed
+        .strip_prefix("fail:")
+        .or_else(|| trimmed.strip_prefix("error:"))
+        .unwrap_or(trimmed);
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return None;
+    }
+
+    if let Some(hex) = raw.strip_prefix("0x").or_else(|| raw.strip_prefix("0X")) {
+        return u32::from_str_radix(hex, 16).ok();
+    }
+
+    raw.parse::<u32>().ok()
 }
 
 #[cfg(test)]

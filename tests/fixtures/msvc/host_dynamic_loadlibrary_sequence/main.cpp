@@ -1,5 +1,6 @@
 #include <windows.h>
 #include <stdio.h>
+#include <wchar.h>
 
 typedef int(__cdecl *PFN_LWTEST_FIXTURE_ID)();
 
@@ -14,14 +15,25 @@ int wmain(int argc, wchar_t **argv) {
     int saw_failure = 0;
 
     for (int i = 1; i < argc; ++i) {
-        HMODULE h = LoadLibraryW(argv[i]);
+        if (wcsncmp(argv[i], L"sleep:", 6) == 0) {
+            DWORD sleep_ms = wcstoul(argv[i] + 6, nullptr, 10);
+            Sleep(sleep_ms);
+            continue;
+        }
+
+        const bool optional = wcsncmp(argv[i], L"optional:", 9) == 0;
+        const wchar_t *target = optional ? argv[i] + 9 : argv[i];
+        HMODULE h = LoadLibraryW(target);
         if (!h) {
             wprintf(
-                L"HOST: LoadLibrary(sequence,%d) failed target=%ls gle=%lu\n",
+                L"HOST: LoadLibrary(sequence,%d) failed target=%ls optional=%d gle=%lu\n",
                 i,
-                argv[i],
+                target,
+                optional ? 1 : 0,
                 GetLastError());
-            saw_failure = 1;
+            if (!optional) {
+                saw_failure = 1;
+            }
             continue;
         }
 
@@ -32,15 +44,17 @@ int wmain(int argc, wchar_t **argv) {
         auto p = (PFN_LWTEST_FIXTURE_ID)GetProcAddress(h, "lwtest_fixture_id");
         if (p) {
             wprintf(
-                L"HOST: LoadLibrary(sequence,%d) ok target=%ls id=%d\n",
+                L"HOST: LoadLibrary(sequence,%d) ok target=%ls optional=%d id=%d\n",
                 i,
-                argv[i],
+                target,
+                optional ? 1 : 0,
                 p());
         } else {
             wprintf(
-                L"HOST: LoadLibrary(sequence,%d) ok target=%ls no_fixture_export\n",
+                L"HOST: LoadLibrary(sequence,%d) ok target=%ls optional=%d no_fixture_export\n",
                 i,
-                argv[i]);
+                target,
+                optional ? 1 : 0);
         }
     }
 
