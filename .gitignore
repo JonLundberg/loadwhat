@@ -66,3 +66,5 @@ Desktop.ini
 tests/fixtures/msvc/out/
 
 output.txt
+
+.claude/settings.local.json
