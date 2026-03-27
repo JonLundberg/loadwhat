@@ -56,7 +56,8 @@ fn verbose_mode_static_finding_suppresses_dynamic_in_summary() {
     assert!(
         lines
             .iter()
-            .any(|line| line.starts_with("STATIC_MISSING ") && line.contains(r#"dll="lwtest_a.dll""#)),
+            .any(|line| line.starts_with("STATIC_MISSING ")
+                && line.contains(r#"dll="lwtest_a.dll""#)),
         "Phase B should report lwtest_a.dll as missing.\n{}",
         result.stdout
     );
@@ -71,7 +72,9 @@ fn verbose_mode_static_finding_suppresses_dynamic_in_summary() {
         summary
     );
     assert!(
-        !lines.iter().any(|line| line.starts_with("DYNAMIC_MISSING ")),
+        !lines
+            .iter()
+            .any(|line| line.starts_with("DYNAMIC_MISSING ")),
         "no DYNAMIC_MISSING should appear when static issue takes precedence.\n{}",
         result.stdout
     );

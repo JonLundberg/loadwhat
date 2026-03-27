@@ -140,8 +140,7 @@ fn run_malformed_target_exe_exits_cleanly() {
         .expect("failed to initialize test case");
 
     let broken = case.root().join("broken.exe");
-    fs::write(&broken, b"this is definitely not a PE file")
-        .expect("failed to write malformed exe");
+    fs::write(&broken, b"this is definitely not a PE file").expect("failed to write malformed exe");
 
     let args = vec![OsString::from("run"), harness::case::os(&broken)];
     let result =
@@ -173,8 +172,7 @@ fn imports_junk_bytes_dll_in_chain_reports_bad_image() {
     harness::pe_builder::write_import_test_pe(&root, &["lwtest_a.dll"])
         .expect("failed to write root.exe");
 
-    fs::write(dir.join("lwtest_a.dll"), b"not a pe image")
-        .expect("failed to write junk dll");
+    fs::write(dir.join("lwtest_a.dll"), b"not a pe image").expect("failed to write junk dll");
 
     let args = vec![
         OsString::from("imports"),
@@ -190,9 +188,11 @@ fn imports_junk_bytes_dll_in_chain_reports_bad_image() {
     harness::assert::assert_exit_code(&result, 10);
     let lines = token_lines(&result.stdout);
     assert!(
-        lines.iter().any(|line| line.starts_with("STATIC_BAD_IMAGE ")
-            && line.contains(r#"dll="lwtest_a.dll""#)
-            && line.contains(r#"reason="BAD_IMAGE""#)),
+        lines
+            .iter()
+            .any(|line| line.starts_with("STATIC_BAD_IMAGE ")
+                && line.contains(r#"dll="lwtest_a.dll""#)
+                && line.contains(r#"reason="BAD_IMAGE""#)),
         "junk bytes DLL should be reported as bad image.\n{}",
         result.stdout
     );

@@ -41,8 +41,7 @@ fn imports_shared_bad_image_dep_reported_once() {
         .expect("failed to write a.dll");
     harness::pe_builder::write_import_test_pe(&dir.join("b.dll"), &["shared_bad.dll"])
         .expect("failed to write b.dll");
-    fs::write(dir.join("shared_bad.dll"), b"not a pe")
-        .expect("failed to write shared_bad.dll");
+    fs::write(dir.join("shared_bad.dll"), b"not a pe").expect("failed to write shared_bad.dll");
 
     let root = dir.join("root.exe");
     let args = vec![

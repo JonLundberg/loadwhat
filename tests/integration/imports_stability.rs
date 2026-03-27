@@ -53,9 +53,7 @@ fn imports_multi_module_bfs_output_is_deterministic_across_runs() {
         .stdout
         .lines()
         .map(|line| line.trim())
-        .filter(|line| {
-            line.starts_with("STATIC_IMPORT ") && line.contains(r#"module="root.exe""#)
-        })
+        .filter(|line| line.starts_with("STATIC_IMPORT ") && line.contains(r#"module="root.exe""#))
         .collect();
     assert!(
         imports.len() >= 3,

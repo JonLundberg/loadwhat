@@ -36,6 +36,11 @@ fn token_lines(stdout: &str) -> Vec<&str> {
         .collect()
 }
 
+fn system32_path(file_name: &str) -> PathBuf {
+    let windir = env::var_os("WINDIR").expect("WINDIR should be set on Windows");
+    PathBuf::from(windir).join("System32").join(file_name)
+}
+
 fn quoted_field_value<'a>(line: &'a str, key: &str) -> Option<&'a str> {
     let needle = format!(r#"{key}=""#);
     let start = line.find(&needle)? + needle.len();
@@ -167,7 +172,7 @@ fn app_local_failure_beats_later_windows_noise_in_public_output() {
             "app\\host_dynamic_loadlibrary_sequence.exe",
         )
         .expect("failed to copy sequence host");
-    let windows_noise = PathBuf::from(r"C:\Windows\System32\ui_noise_missing.dll");
+    let windows_noise = system32_path("ui_noise_missing.dll");
 
     let args = vec![
         OsString::from("run"),

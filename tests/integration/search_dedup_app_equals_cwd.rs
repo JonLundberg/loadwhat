@@ -59,9 +59,7 @@ fn imports_app_dir_equals_cwd_no_duplicate_search_paths() {
     // Collect all SEARCH_PATH lines for missing.dll and extract the path values
     let search_paths: Vec<&str> = token_lines(&result.stdout)
         .into_iter()
-        .filter(|line| {
-            line.starts_with("SEARCH_PATH ") && line.contains(r#"dll="missing.dll""#)
-        })
+        .filter(|line| line.starts_with("SEARCH_PATH ") && line.contains(r#"dll="missing.dll""#))
         .collect();
 
     let path_values: Vec<String> = search_paths

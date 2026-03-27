@@ -1102,6 +1102,13 @@ struct DynamicMissing {
 }
 
 #[cfg(windows)]
+#[derive(Debug, Clone)]
+struct DynamicLoadContext {
+    dll: String,
+    path: Option<PathBuf>,
+}
+
+#[cfg(windows)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum DynamicCandidateKind {
     Other,
@@ -1109,6 +1116,13 @@ enum DynamicCandidateKind {
     InitializeProcessFailure,
     LoadDllFailed,
     UnableToLoadDll,
+}
+
+#[cfg(windows)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DynamicFailureKind {
+    NameBased,
+    FullPathProbe,
 }
 
 #[cfg(windows)]
@@ -1123,7 +1137,8 @@ struct DynamicCandidate {
     kind: DynamicCandidateKind,
     app_local_hint: bool,
     framework_or_os_hint: bool,
-    later_loaded: bool,
+    failure_kind: DynamicFailureKind,
+    resolved: bool,
     thread_correlated: bool,
 }
 
@@ -1133,123 +1148,149 @@ fn detect_dynamic_missing_from_debug_strings(
     exe_dir: &Path,
     cwd: &Path,
 ) -> Option<DynamicMissing> {
-    let mut last_load_by_tid: HashMap<u32, String> = HashMap::new();
+    let mut last_load_by_tid: HashMap<u32, DynamicLoadContext> = HashMap::new();
     let mut candidates: Vec<DynamicCandidate> = Vec::new();
     let mut last_failure_candidate_by_tid: HashMap<u32, usize> = HashMap::new();
-    let mut latest_loaded_idx_by_basename: HashMap<String, usize> = HashMap::new();
+    let mut latest_success_idx_by_basename: HashMap<String, usize> = HashMap::new();
 
     for (idx, event) in outcome.runtime_events.iter().enumerate() {
-        if let RuntimeEvent::RuntimeLoaded(module) = event {
-            let basename = module_name_lower(Path::new(&module.dll_name));
-            latest_loaded_idx_by_basename
-                .entry(basename)
-                .and_modify(|existing| *existing = (*existing).max(idx))
-                .or_insert(idx);
-        }
-    }
-
-    for (idx, event) in outcome.runtime_events.iter().enumerate() {
-        let RuntimeEvent::DebugString(debug) = event else {
-            continue;
-        };
-
-        let raw = debug.text.trim();
-        if raw.is_empty() {
-            continue;
-        }
-
-        let lower = raw.to_ascii_lowercase();
-        let dlls = extract_dll_basenames(&lower);
-        if !dlls.is_empty() && looks_like_load_attempt(&lower) {
-            if let Some(candidate) = pick_best_dll(&dlls).or_else(|| dlls.first().cloned()) {
-                last_load_by_tid.insert(debug.tid, candidate);
+        match event {
+            RuntimeEvent::RuntimeLoaded(module) => {
+                let basename = module_name_lower(Path::new(&module.dll_name));
+                record_dynamic_success(&mut latest_success_idx_by_basename, &basename, idx);
             }
-        }
+            RuntimeEvent::DebugString(debug) => {
+                let raw = debug.text.trim();
+                if raw.is_empty() {
+                    continue;
+                }
 
-        if let Some(status) = extract_status_return_only(&lower) {
-            if let Some(idx) = last_failure_candidate_by_tid.get(&debug.tid).copied() {
-                if let Some(candidate) = candidates.get_mut(idx) {
-                    if candidate.status.is_none() {
-                        candidate.status = Some(status);
-                        candidate.reason = classify_dynamic_reason(&lower, Some(status));
+                let lower = raw.to_ascii_lowercase();
+                let dlls = extract_dll_basenames(&lower);
+                let explicit_path = extract_candidate_path(raw);
+
+                if !dlls.is_empty() && looks_like_load_attempt(&lower) {
+                    if let Some(candidate) = pick_best_dll(&dlls).or_else(|| dlls.first().cloned())
+                    {
+                        last_load_by_tid.insert(
+                            debug.tid,
+                            DynamicLoadContext {
+                                dll: candidate,
+                                path: explicit_path.clone(),
+                            },
+                        );
                     }
                 }
+
+                if let Some(status) = extract_load_return_status(&lower) {
+                    if status == 0 {
+                        let success_dll = pick_best_dll(&dlls)
+                            .or_else(|| dlls.first().cloned())
+                            .or_else(|| {
+                                last_load_by_tid.get(&debug.tid).map(|ctx| ctx.dll.clone())
+                            });
+                        if let Some(dll) = success_dll {
+                            record_dynamic_success(&mut latest_success_idx_by_basename, &dll, idx);
+                        }
+                    } else if is_loader_related_code(status) {
+                        if let Some(candidate_idx) =
+                            last_failure_candidate_by_tid.get(&debug.tid).copied()
+                        {
+                            if let Some(candidate) = candidates.get_mut(candidate_idx) {
+                                if candidate.status.is_none() {
+                                    candidate.status = Some(status);
+                                    candidate.reason =
+                                        classify_dynamic_reason(&lower, Some(status));
+                                }
+                            }
+                        }
+                    }
+
+                    last_failure_candidate_by_tid.remove(&debug.tid);
+                    last_load_by_tid.remove(&debug.tid);
+                }
+
+                if is_ignored_probe_line(&lower) {
+                    continue;
+                }
+
+                let Some(kind) = classify_dynamic_candidate_kind(&lower) else {
+                    continue;
+                };
+                let score = failure_score(&lower);
+                if score <= 0 {
+                    continue;
+                }
+
+                let status = extract_first_hex_u32(&lower);
+                let from_line = pick_best_dll(&dlls).or_else(|| dlls.first().cloned());
+                let from_thread = last_load_by_tid.get(&debug.tid).cloned();
+                let explicit = extract_unable_to_load_dll(&lower);
+                let candidate = explicit
+                    .clone()
+                    .or_else(|| from_line.clone())
+                    .or_else(|| from_thread.as_ref().map(|ctx| ctx.dll.clone()));
+                let Some(dll) = candidate else {
+                    continue;
+                };
+
+                let reason = classify_dynamic_reason(&lower, status);
+
+                let dll = if is_noise_dll(&dll) {
+                    pick_best_dll(&dlls)
+                        .or_else(|| from_thread.as_ref().map(|ctx| ctx.dll.clone()))
+                        .unwrap_or(dll)
+                } else {
+                    dll
+                };
+
+                let candidate_path = explicit_path
+                    .clone()
+                    .or_else(|| from_thread.as_ref().and_then(|ctx| ctx.path.clone()));
+                let app_local_hint = candidate_path
+                    .as_ref()
+                    .map(|path| is_app_local_path(path, exe_dir, cwd))
+                    .unwrap_or(false);
+                let framework_or_os_hint = candidate_path
+                    .as_ref()
+                    .map(|path| is_windows_or_gac_path(path))
+                    .unwrap_or(false)
+                    || is_noise_dll(&dll);
+                let thread_correlated =
+                    explicit.is_none() && from_line.is_none() && from_thread.is_some();
+
+                let detected = DynamicCandidate {
+                    event_idx: idx,
+                    tid: debug.tid,
+                    dll,
+                    reason,
+                    status,
+                    score,
+                    kind,
+                    app_local_hint,
+                    framework_or_os_hint,
+                    failure_kind: classify_failure_kind(kind, candidate_path.as_deref()),
+                    resolved: false,
+                    thread_correlated,
+                };
+                candidates.push(detected);
+                if !thread_correlated {
+                    last_failure_candidate_by_tid.insert(debug.tid, candidates.len() - 1);
+                }
             }
-        }
-
-        if is_ignored_probe_line(&lower) {
-            continue;
-        }
-
-        let Some(kind) = classify_dynamic_candidate_kind(&lower) else {
-            continue;
-        };
-        let score = failure_score(&lower);
-        if score <= 0 {
-            continue;
-        }
-
-        let status = extract_first_hex_u32(&lower);
-        let from_line = pick_best_dll(&dlls).or_else(|| dlls.first().cloned());
-        let from_thread = last_load_by_tid.get(&debug.tid).cloned();
-        let explicit = extract_unable_to_load_dll(&lower);
-        let candidate = explicit
-            .clone()
-            .or_else(|| from_line.clone())
-            .or_else(|| from_thread.clone());
-        let Some(dll) = candidate else {
-            continue;
-        };
-
-        let reason = classify_dynamic_reason(&lower, status);
-
-        let dll = if is_noise_dll(&dll) {
-            pick_best_dll(&dlls)
-                .or_else(|| from_thread.clone())
-                .unwrap_or(dll)
-        } else {
-            dll
-        };
-
-        let explicit_path = extract_candidate_path(raw);
-        let app_local_hint = explicit_path
-            .as_ref()
-            .map(|path| is_app_local_path(path, exe_dir, cwd))
-            .unwrap_or(false);
-        let framework_or_os_hint = explicit_path
-            .as_ref()
-            .map(|path| is_windows_or_gac_path(path))
-            .unwrap_or(false)
-            || is_noise_dll(&dll);
-        let thread_correlated = explicit.is_none() && from_line.is_none() && from_thread.is_some();
-
-        let detected = DynamicCandidate {
-            event_idx: idx,
-            tid: debug.tid,
-            dll,
-            reason,
-            status,
-            score,
-            kind,
-            app_local_hint,
-            framework_or_os_hint,
-            later_loaded: false,
-            thread_correlated,
-        };
-        candidates.push(detected);
-        if !thread_correlated {
-            last_failure_candidate_by_tid.insert(debug.tid, candidates.len() - 1);
         }
     }
 
     for candidate in &mut candidates {
-        candidate.later_loaded = latest_loaded_idx_by_basename
-            .get(&candidate.dll)
-            .map(|idx| *idx > candidate.event_idx)
-            .unwrap_or(false);
+        let success_idx = latest_success_idx_by_basename.get(&candidate.dll).copied();
+        candidate.resolved = success_idx
+            .map(|idx| idx > candidate.event_idx)
+            .unwrap_or(false)
+            || matches!(candidate.failure_kind, DynamicFailureKind::FullPathProbe)
+                && success_idx.is_some();
     }
 
-    candidates.retain(|candidate| !candidate.later_loaded);
+    candidates.retain(|candidate| !candidate.resolved);
     if candidates.is_empty() {
         return None;
     }
@@ -1329,13 +1370,43 @@ fn classify_dynamic_reason(text_lower: &str, status: Option<u32>) -> &'static st
 }
 
 #[cfg(windows)]
-fn extract_status_return_only(text_lower: &str) -> Option<u32> {
+fn extract_load_return_status(text_lower: &str) -> Option<u32> {
     let is_return = text_lower.contains("ldrloaddll - return")
         || text_lower.contains("ldrploaddllinternal - return");
     if !is_return {
         return None;
     }
-    extract_first_hex_u32(text_lower).filter(|code| is_loader_related_code(*code))
+    extract_first_hex_u32(text_lower)
+}
+
+#[cfg(windows)]
+fn classify_failure_kind(kind: DynamicCandidateKind, path: Option<&Path>) -> DynamicFailureKind {
+    match path {
+        Some(value)
+            if value.is_absolute()
+                && matches!(
+                    kind,
+                    DynamicCandidateKind::SearchPathFailure
+                        | DynamicCandidateKind::LoadDllFailed
+                        | DynamicCandidateKind::UnableToLoadDll
+                ) =>
+        {
+            DynamicFailureKind::FullPathProbe
+        }
+        _ => DynamicFailureKind::NameBased,
+    }
+}
+
+#[cfg(windows)]
+fn record_dynamic_success(
+    latest_success_idx_by_basename: &mut HashMap<String, usize>,
+    dll: &str,
+    idx: usize,
+) {
+    latest_success_idx_by_basename
+        .entry(dll.to_string())
+        .and_modify(|existing| *existing = (*existing).max(idx))
+        .or_insert(idx);
 }
 
 #[cfg(windows)]
@@ -2042,6 +2113,65 @@ mod dynamic_missing_tests {
             runtime_loaded("two.dll"),
         ]);
         assert!(detect_for_tests(&outcome).is_none());
+    }
+
+    #[test]
+    fn full_path_probe_is_cleared_by_earlier_success_for_same_basename() {
+        let outcome = outcome_with_events(vec![
+            runtime_loaded("resolved.dll"),
+            debug_line(
+                1,
+                r#"LdrpProcessWork - ERROR: Unable to load DLL: "C:\Missing\resolved.dll", Status: 0xc0000135"#,
+            ),
+        ]);
+        assert!(detect_for_tests(&outcome).is_none());
+    }
+
+    #[test]
+    fn successful_return_clears_previous_candidate_for_same_basename() {
+        let outcome = outcome_with_events(vec![
+            debug_line(1, r#"LdrLoadDll - ENTER: DLL name: C:\Missing\retry.dll"#),
+            debug_line(
+                1,
+                r#"LdrpProcessWork - ERROR: Unable to load DLL: "C:\Missing\retry.dll", Status: 0xc0000135"#,
+            ),
+            debug_line(1, r#"LdrLoadDll - ENTER: DLL name: C:\Good\retry.dll"#),
+            debug_line(1, r#"LdrLoadDll - RETURN: Status: 0x00000000"#),
+        ]);
+        assert!(detect_for_tests(&outcome).is_none());
+    }
+
+    #[test]
+    fn init_routine_failure_is_not_cleared_by_earlier_success() {
+        let outcome = outcome_with_events(vec![
+            runtime_loaded("initfail.dll"),
+            debug_line(
+                7,
+                r#"LdrpInitializeNode - ERROR: Init routine 00007FFFECEF10F0 for DLL "C:\App\initfail.dll" failed during DLL_PROCESS_ATTACH"#,
+            ),
+            debug_line(7, r#"LdrpLoadDllInternal - RETURN: Status: 0xC0000142"#),
+        ]);
+        let detected = detect_for_tests(&outcome).expect("expected dynamic missing");
+        assert_eq!(detected.dll, "initfail.dll");
+        assert_eq!(detected.reason, "OTHER");
+        assert_eq!(detected.status, Some(0xC0000142));
+    }
+
+    #[test]
+    fn earlier_loaded_full_path_probe_does_not_beat_real_unresolved_candidate() {
+        let outcome = outcome_with_events(vec![
+            runtime_loaded("resolved.dll"),
+            debug_line(
+                1,
+                r#"LdrpProcessWork - ERROR: Unable to load DLL: "C:\Missing\resolved.dll", Status: 0xc0000135"#,
+            ),
+            debug_line(
+                1,
+                r#"LdrpProcessWork - ERROR: Unable to load DLL: "C:\App\required.dll", Status: 0xc0000135"#,
+            ),
+        ]);
+        let detected = detect_for_tests(&outcome).expect("expected dynamic missing");
+        assert_eq!(detected.dll, "required.dll");
     }
 
     #[test]

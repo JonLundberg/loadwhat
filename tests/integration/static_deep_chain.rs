@@ -59,9 +59,7 @@ fn imports_deep_transitive_chain_reports_correct_depth() {
     let lines = token_lines(&result.stdout);
     let missing_line = lines
         .iter()
-        .find(|line| {
-            line.starts_with("STATIC_MISSING ") && line.contains(r#"dll="missing.dll""#)
-        })
+        .find(|line| line.starts_with("STATIC_MISSING ") && line.contains(r#"dll="missing.dll""#))
         .expect("expected STATIC_MISSING for missing.dll");
     assert!(
         missing_line.contains(r#"via="d.dll""#),

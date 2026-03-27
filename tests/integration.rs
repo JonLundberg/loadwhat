@@ -30,14 +30,14 @@ mod dynamic_nested_loadlibrary;
 #[path = "integration/imports_bad_image.rs"]
 mod imports_bad_image;
 #[cfg(all(windows, feature = "harness-tests"))]
+#[path = "integration/imports_edge_cases.rs"]
+mod imports_edge_cases;
+#[cfg(all(windows, feature = "harness-tests"))]
 #[path = "integration/imports_on_dll.rs"]
 mod imports_on_dll;
 #[cfg(all(windows, feature = "harness-tests"))]
 #[path = "integration/imports_stability.rs"]
 mod imports_stability;
-#[cfg(all(windows, feature = "harness-tests"))]
-#[path = "integration/imports_edge_cases.rs"]
-mod imports_edge_cases;
 #[cfg(all(windows, feature = "harness-tests"))]
 #[path = "integration/imports_transitive_missing.rs"]
 mod imports_transitive_missing;
@@ -90,23 +90,23 @@ mod shared_dependency_graph;
 #[path = "integration/static_bad_image_direct.rs"]
 mod static_bad_image_direct;
 #[cfg(all(windows, feature = "harness-tests"))]
+#[path = "integration/static_bad_image_transitive.rs"]
+mod static_bad_image_transitive;
+#[cfg(all(windows, feature = "harness-tests"))]
 #[path = "integration/static_circular_dependency.rs"]
 mod static_circular_dependency;
 #[cfg(all(windows, feature = "harness-tests"))]
 #[path = "integration/static_deep_chain.rs"]
 mod static_deep_chain;
 #[cfg(all(windows, feature = "harness-tests"))]
-#[path = "integration/static_bad_image_transitive.rs"]
-mod static_bad_image_transitive;
-#[cfg(all(windows, feature = "harness-tests"))]
 #[path = "integration/static_missing_direct.rs"]
 mod static_missing_direct;
 #[cfg(all(windows, feature = "harness-tests"))]
-#[path = "integration/static_multiple_missing_at_same_depth.rs"]
-mod static_multiple_missing_at_same_depth;
-#[cfg(all(windows, feature = "harness-tests"))]
 #[path = "integration/static_missing_transitive.rs"]
 mod static_missing_transitive;
+#[cfg(all(windows, feature = "harness-tests"))]
+#[path = "integration/static_multiple_missing_at_same_depth.rs"]
+mod static_multiple_missing_at_same_depth;
 #[cfg(all(windows, feature = "harness-tests"))]
 #[path = "integration/static_wrong_pick.rs"]
 mod static_wrong_pick;

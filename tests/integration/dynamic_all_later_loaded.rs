@@ -74,3 +74,54 @@ fn dynamic_all_candidates_later_loaded_emits_no_dynamic_missing() {
         result.stdout
     );
 }
+
+#[test]
+fn dynamic_optional_fullpath_probe_then_retry_emits_no_dynamic_missing() {
+    let paths = harness::paths::require_from_env();
+    let case = harness::case::TestCase::new(&paths, "dynamic_all_later_loaded_fullpath_probe")
+        .expect("failed to initialize test case");
+
+    let app_dir = case.mkdir("app").expect("failed to create app directory");
+    case.mkdir("good").expect("failed to create good directory");
+    let missing_dir = case
+        .mkdir("missing")
+        .expect("failed to create missing directory");
+
+    let exe = case
+        .copy_fixture(
+            harness::fixture::HOST_DYNAMIC_LOADLIBRARY_SEQUENCE_EXE,
+            "app\\host_dynamic_loadlibrary_sequence.exe",
+        )
+        .expect("failed to copy sequence host");
+    let good_dll = case
+        .copy_fixture_as(
+            harness::fixture::DLL_LWTEST_A_V1,
+            "good",
+            "lwtest_probe.dll",
+        )
+        .expect("failed to copy probe dll");
+    case.copy_fixture_as(harness::fixture::DLL_LWTEST_B, "app", "lwtest_b.dll")
+        .expect("failed to copy app-local dependency");
+
+    let missing_probe = missing_dir.join("lwtest_probe.dll");
+    let args = vec![
+        OsString::from("run"),
+        OsString::from("--cwd"),
+        harness::case::os(&app_dir),
+        harness::case::os(&exe),
+        OsString::from(format!("optional:{}", missing_probe.display())),
+        harness::case::os(&good_dll),
+    ];
+    let result =
+        harness::run_loadwhat::run_public(&paths, case.root(), &args, Duration::from_secs(20))
+            .expect("failed to run loadwhat");
+
+    harness::assert::assert_not_timed_out(&result);
+    harness::assert::assert_exit_code(&result, 0);
+    assert_eq!(
+        token_lines(&result.stdout),
+        vec!["SUCCESS status=0"],
+        "full-path probe failure later satisfied elsewhere should not produce DYNAMIC_MISSING.\n{}",
+        result.stdout
+    );
+}

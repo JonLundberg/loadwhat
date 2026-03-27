@@ -108,9 +108,9 @@ fn imports_on_dll_with_no_issues() {
         summary
     );
     assert!(
-        !lines
-            .iter()
-            .any(|line| line.starts_with("STATIC_MISSING ") || line.starts_with("STATIC_BAD_IMAGE ")),
+        !lines.iter().any(
+            |line| line.starts_with("STATIC_MISSING ") || line.starts_with("STATIC_BAD_IMAGE ")
+        ),
         "should have no missing or bad-image tokens.\n{}",
         result.stdout
     );

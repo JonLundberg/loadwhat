@@ -56,11 +56,7 @@ fn imports_path_with_empty_segments_does_not_crash() {
         .expect("failed to write lwtest_a.dll");
 
     // Build PATH with an empty segment between path_a and path_b
-    let custom_path = format!(
-        "{};;{}",
-        path_a.display(),
-        path_b.display()
-    );
+    let custom_path = format!("{};;{}", path_a.display(), path_b.display());
     // Append the system PATH so kernel32.dll etc. are still found
     let full_path = if let Some(existing) = env::var_os("PATH") {
         format!("{};{}", custom_path, existing.to_string_lossy())
@@ -105,7 +101,9 @@ fn imports_bad_image_in_search_path_stops_search() {
         .expect("failed to initialize test case");
 
     let dir = case.mkdir("app").expect("failed to create app directory");
-    let early_dir = case.mkdir("early").expect("failed to create early directory");
+    let early_dir = case
+        .mkdir("early")
+        .expect("failed to create early directory");
     let late_dir = case.mkdir("late").expect("failed to create late directory");
 
     let root = dir.join("root.exe");
@@ -142,14 +140,17 @@ fn imports_bad_image_in_search_path_stops_search() {
     harness::assert::assert_exit_code(&result, 10);
     let lines = token_lines(&result.stdout);
     assert!(
-        lines.iter().any(|line| line.starts_with("STATIC_BAD_IMAGE ")
-            && line.contains(r#"dll="target.dll""#)),
+        lines
+            .iter()
+            .any(|line| line.starts_with("STATIC_BAD_IMAGE ")
+                && line.contains(r#"dll="target.dll""#)),
         "bad image in early path position should be reported.\n{}",
         result.stdout
     );
     assert!(
-        !lines.iter().any(|line| line.starts_with("STATIC_FOUND ")
-            && line.contains(r#"dll="target.dll""#)),
+        !lines
+            .iter()
+            .any(|line| line.starts_with("STATIC_FOUND ") && line.contains(r#"dll="target.dll""#)),
         "valid copy later in search should NOT be found — search stops at bad image.\n{}",
         result.stdout
     );

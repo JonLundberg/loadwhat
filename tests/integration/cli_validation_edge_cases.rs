@@ -36,8 +36,14 @@ fn cli_missing_target_returns_exit_20() {
     harness::assert::assert_not_timed_out(&result);
     harness::assert::assert_exit_code(&result, 20);
     assert!(
-        result.stderr.to_ascii_lowercase().contains("missing target executable")
-            || result.stdout.to_ascii_lowercase().contains("missing target executable"),
+        result
+            .stderr
+            .to_ascii_lowercase()
+            .contains("missing target executable")
+            || result
+                .stdout
+                .to_ascii_lowercase()
+                .contains("missing target executable"),
         "expected 'missing target executable' in output.\nstdout:\n{}\nstderr:\n{}",
         result.stdout,
         result.stderr
@@ -58,11 +64,9 @@ fn cli_nonexistent_target_returns_exit_20() {
     let paths = harness::paths::require_from_env();
     let case = harness::case::TestCase::new(&paths, "cli_nonexistent_target")
         .expect("failed to initialize test case");
+    let missing_target = case.root().join("missing").join("fake.exe");
 
-    let args = vec![
-        OsString::from("run"),
-        OsString::from(r"C:\nonexistent_path_12345\fake.exe"),
-    ];
+    let args = vec![OsString::from("run"), harness::case::os(&missing_target)];
     let result =
         harness::run_loadwhat::run_public(&paths, case.root(), &args, Duration::from_secs(20))
             .expect("failed to run loadwhat");

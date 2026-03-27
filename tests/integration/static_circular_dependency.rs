@@ -31,16 +31,13 @@ fn imports_circular_dependency_terminates() {
     let dir = case.mkdir("app").expect("failed to create app directory");
 
     let root = dir.join("root.exe");
-    harness::pe_builder::write_import_test_pe(&root, &["a.dll"])
-        .expect("failed to write root.exe");
+    harness::pe_builder::write_import_test_pe(&root, &["a.dll"]).expect("failed to write root.exe");
 
     let a_dll = dir.join("a.dll");
-    harness::pe_builder::write_import_test_pe(&a_dll, &["b.dll"])
-        .expect("failed to write a.dll");
+    harness::pe_builder::write_import_test_pe(&a_dll, &["b.dll"]).expect("failed to write a.dll");
 
     let b_dll = dir.join("b.dll");
-    harness::pe_builder::write_import_test_pe(&b_dll, &["a.dll"])
-        .expect("failed to write b.dll");
+    harness::pe_builder::write_import_test_pe(&b_dll, &["a.dll"]).expect("failed to write b.dll");
 
     let args = vec![
         OsString::from("imports"),

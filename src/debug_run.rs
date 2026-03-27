@@ -528,15 +528,18 @@ mod tests {
     use super::{debug_string_text, run_target, RunError, RuntimeEvent};
     use std::ffi::OsString;
     use std::path::PathBuf;
+    use std::process;
 
     fn system_exe(name: &str) -> PathBuf {
-        let windir = std::env::var_os("WINDIR").unwrap_or_else(|| "C:\\Windows".into());
+        let windir = std::env::var_os("WINDIR").expect("WINDIR should be set on Windows");
         PathBuf::from(windir).join("System32").join(name)
     }
 
     #[test]
     fn run_target_missing_path_returns_message_error() {
-        let missing = PathBuf::from(r"C:\__loadwhat_tests__\definitely_missing.exe");
+        let missing = std::env::temp_dir()
+            .join(format!("loadwhat-missing-{}", process::id()))
+            .join("definitely_missing.exe");
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let result = run_target(&missing, &[], Some(&cwd), 1000, false);
         match result {
