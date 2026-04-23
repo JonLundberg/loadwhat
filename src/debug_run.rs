@@ -194,11 +194,7 @@ pub fn run_target(
                         .map(PathBuf::from);
                 let path = path_from_file.or(path_from_name);
 
-                let dll_name = path
-                    .as_ref()
-                    .and_then(|v| v.file_name())
-                    .map(|v| v.to_string_lossy().to_string())
-                    .unwrap_or_else(|| format!("UNKNOWN_{:016X}", info.lp_base_of_dll as usize));
+                let dll_name = loaded_module_name(path.as_deref(), info.lp_base_of_dll as usize);
 
                 let module = LoadedModule {
                     dll_name,
@@ -260,19 +256,7 @@ pub fn run_target(
     close_if_needed(pi.h_thread);
     close_if_needed(pi.h_process);
 
-    let end_kind = if saw_exit {
-        if saw_terminal_exception {
-            RunEndKind::Exception
-        } else {
-            RunEndKind::ExitProcess
-        }
-    } else if timeout_hit {
-        RunEndKind::Timeout
-    } else if saw_terminal_exception {
-        RunEndKind::Exception
-    } else {
-        RunEndKind::Timeout
-    };
+    let end_kind = determine_end_kind(saw_exit, saw_terminal_exception, timeout_hit);
 
     Ok(RunOutcome {
         pid: pi.dw_process_id,
@@ -362,6 +346,32 @@ fn read_output_debug_string(
 
 fn debug_string_text(value: Option<String>) -> String {
     value.unwrap_or_else(|| "UNREADABLE".to_string())
+}
+
+fn determine_end_kind(
+    saw_exit: bool,
+    saw_terminal_exception: bool,
+    timeout_hit: bool,
+) -> RunEndKind {
+    if saw_exit {
+        if saw_terminal_exception {
+            RunEndKind::Exception
+        } else {
+            RunEndKind::ExitProcess
+        }
+    } else if timeout_hit {
+        RunEndKind::Timeout
+    } else if saw_terminal_exception {
+        RunEndKind::Exception
+    } else {
+        RunEndKind::Timeout
+    }
+}
+
+fn loaded_module_name(path: Option<&Path>, base: usize) -> String {
+    path.and_then(|v| v.file_name())
+        .map(|v| v.to_string_lossy().to_string())
+        .unwrap_or_else(|| format!("UNKNOWN_{base:016X}"))
 }
 
 #[cfg(debug_assertions)]
@@ -525,7 +535,12 @@ fn read_remote_ansi(process: win::Handle, mut ptr: *const std::ffi::c_void) -> O
 
 #[cfg(test)]
 mod tests {
-    use super::{debug_string_text, run_target, RunError, RuntimeEvent};
+    use super::{
+        build_command_line, debug_string_text, determine_end_kind, force_unreadable_debug_string,
+        loaded_module_name, quote_cmd_arg, run_target, RunEndKind, RunError, RuntimeEvent,
+    };
+    use crate::test_util::EnvVarGuard;
+    use crate::win::TEST_ENV_LOCK;
     use std::ffi::OsString;
     use std::path::PathBuf;
     use std::process;
@@ -560,7 +575,98 @@ mod tests {
     }
 
     #[test]
+    fn quote_cmd_arg_leaves_simple_arg_unquoted() {
+        assert_eq!(quote_cmd_arg("notepad.exe"), "notepad.exe");
+    }
+
+    #[test]
+    fn quote_cmd_arg_quotes_spaces() {
+        assert_eq!(quote_cmd_arg("two words"), r#""two words""#);
+    }
+
+    #[test]
+    fn quote_cmd_arg_escapes_embedded_quotes() {
+        assert_eq!(quote_cmd_arg(r#"a"b"#), r#""a\"b""#);
+    }
+
+    #[test]
+    fn quote_cmd_arg_handles_backslashes_before_quotes() {
+        assert_eq!(quote_cmd_arg(r#"a\"b"#), r#""a\\\"b""#);
+    }
+
+    #[test]
+    fn build_command_line_joins_exe_and_args_correctly() {
+        let exe = PathBuf::from(r"C:\Program Files\App\tool.exe");
+        let args = vec![
+            OsString::from("--flag"),
+            OsString::from("two words"),
+            OsString::from(r#"a"b"#),
+        ];
+
+        assert_eq!(
+            build_command_line(&exe, &args),
+            r#""C:\Program Files\App\tool.exe" --flag "two words" "a\"b""#
+        );
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn force_unreadable_debug_string_honors_test_override() {
+        let _lock = TEST_ENV_LOCK.lock().expect("test env lock poisoned");
+        let _guard = EnvVarGuard::set("LOADWHAT_TEST_FORCE_UNREADABLE_DEBUG_STRING", "1");
+
+        assert!(force_unreadable_debug_string());
+    }
+
+    #[test]
+    fn determine_end_kind_prefers_exception_after_exit() {
+        assert!(matches!(
+            determine_end_kind(true, true, false),
+            RunEndKind::Exception
+        ));
+    }
+
+    #[test]
+    fn determine_end_kind_reports_exit_process() {
+        assert!(matches!(
+            determine_end_kind(true, false, false),
+            RunEndKind::ExitProcess
+        ));
+    }
+
+    #[test]
+    fn determine_end_kind_reports_timeout() {
+        assert!(matches!(
+            determine_end_kind(false, false, true),
+            RunEndKind::Timeout
+        ));
+    }
+
+    #[test]
+    fn determine_end_kind_timeout_takes_precedence_over_exception_without_exit() {
+        // When the process didn't exit but both timeout and exception occurred,
+        // timeout wins. This differs from the saw_exit branch where exception
+        // takes precedence.
+        assert!(matches!(
+            determine_end_kind(false, true, true),
+            RunEndKind::Timeout
+        ));
+    }
+
+    #[test]
+    fn loaded_module_name_falls_back_to_unknown_base() {
+        assert_eq!(
+            loaded_module_name(None, 0x0000_7FFF_1234_ABCD),
+            "UNKNOWN_00007FFF1234ABCD"
+        );
+    }
+
+    #[test]
     fn run_target_loader_snaps_peb_captures_debug_strings() {
+        let _lock = TEST_ENV_LOCK.lock().expect("test env lock poisoned");
+        let _peb_guard = EnvVarGuard::remove("LOADWHAT_TEST_PEB_ENABLE");
+        let _force_unreadable_guard =
+            EnvVarGuard::remove("LOADWHAT_TEST_FORCE_UNREADABLE_DEBUG_STRING");
         let exe = system_exe("cmd.exe");
         assert!(exe.exists(), "expected {} to exist", exe.display());
 

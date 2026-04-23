@@ -420,6 +420,8 @@ fn parse_test_error_code(value: &str) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::{enable_via_peb, LoaderSnapsGuard, PebEnableError};
+    use crate::test_util::EnvVarGuard;
+    use crate::win::TEST_ENV_LOCK;
 
     #[test]
     fn enable_for_image_rejects_empty_name() {
@@ -429,10 +431,181 @@ mod tests {
 
     #[test]
     fn enable_via_peb_rejects_null_process() {
+        let _lock = TEST_ENV_LOCK.lock().expect("test env lock poisoned");
+        let _guard = EnvVarGuard::remove("LOADWHAT_TEST_PEB_ENABLE");
+
         let result = enable_via_peb(std::ptr::null_mut());
         assert!(matches!(
             result,
             Err(PebEnableError::Win32 { code: 87, .. })
         ));
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn enable_for_image_uses_noop_override() {
+        let _lock = TEST_ENV_LOCK.lock().expect("test env lock poisoned");
+        let _guard = EnvVarGuard::set("LOADWHAT_TEST_IFEO_ENABLE", "noop");
+
+        let guard = LoaderSnapsGuard::enable_for_image("app.exe")
+            .expect("noop IFEO override should succeed");
+
+        assert!(guard.test_noop);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn enable_for_image_uses_ok_noop_override() {
+        let _lock = TEST_ENV_LOCK.lock().expect("test env lock poisoned");
+        let _guard = EnvVarGuard::set("LOADWHAT_TEST_IFEO_ENABLE", "ok-noop");
+
+        let guard = LoaderSnapsGuard::enable_for_image("app.exe")
+            .expect("ok-noop IFEO override should succeed");
+
+        assert!(guard.test_noop);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn enable_for_image_returns_decimal_override_error() {
+        let _lock = TEST_ENV_LOCK.lock().expect("test env lock poisoned");
+        let _guard = EnvVarGuard::set("LOADWHAT_TEST_IFEO_ENABLE", "fail:123");
+
+        assert_eq!(
+            LoaderSnapsGuard::enable_for_image("app.exe").err(),
+            Some(123)
+        );
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn enable_for_image_returns_hex_override_error() {
+        let _lock = TEST_ENV_LOCK.lock().expect("test env lock poisoned");
+        let _guard = EnvVarGuard::set("LOADWHAT_TEST_IFEO_ENABLE", "fail:0x0000007B");
+
+        assert_eq!(
+            LoaderSnapsGuard::enable_for_image("app.exe").err(),
+            Some(123)
+        );
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn restore_succeeds_for_test_noop_guard() {
+        let _lock = TEST_ENV_LOCK.lock().expect("test env lock poisoned");
+        let _enable_guard = EnvVarGuard::set("LOADWHAT_TEST_IFEO_ENABLE", "noop");
+        let _restore_guard = EnvVarGuard::remove("LOADWHAT_TEST_IFEO_RESTORE");
+        let mut guard = LoaderSnapsGuard::enable_for_image("app.exe")
+            .expect("noop IFEO override should succeed");
+
+        assert_eq!(guard.restore(), Ok(()));
+        assert!(guard.restored);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn restore_is_idempotent() {
+        let _lock = TEST_ENV_LOCK.lock().expect("test env lock poisoned");
+        let _enable_guard = EnvVarGuard::set("LOADWHAT_TEST_IFEO_ENABLE", "noop");
+        let _restore_guard = EnvVarGuard::remove("LOADWHAT_TEST_IFEO_RESTORE");
+        let mut guard = LoaderSnapsGuard::enable_for_image("app.exe")
+            .expect("noop IFEO override should succeed");
+
+        assert_eq!(guard.restore(), Ok(()));
+        assert_eq!(guard.restore(), Ok(()));
+        assert!(guard.restored);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn restore_returns_override_error() {
+        let _lock = TEST_ENV_LOCK.lock().expect("test env lock poisoned");
+        let _enable_guard = EnvVarGuard::set("LOADWHAT_TEST_IFEO_ENABLE", "noop");
+        let _restore_guard = EnvVarGuard::set("LOADWHAT_TEST_IFEO_RESTORE", "error:99");
+        let mut guard = LoaderSnapsGuard::enable_for_image("app.exe")
+            .expect("noop IFEO override should succeed");
+
+        assert_eq!(guard.restore(), Err(99));
+        assert!(!guard.restored);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn enable_via_peb_override_reports_unsupported_wow64() {
+        let _lock = TEST_ENV_LOCK.lock().expect("test env lock poisoned");
+        let _guard = EnvVarGuard::set("LOADWHAT_TEST_PEB_ENABLE", "wow64");
+
+        assert!(matches!(
+            enable_via_peb(std::ptr::null_mut()),
+            Err(PebEnableError::UnsupportedWow64)
+        ));
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn enable_via_peb_override_returns_ok_info() {
+        let _lock = TEST_ENV_LOCK.lock().expect("test env lock poisoned");
+        let _guard = EnvVarGuard::set("LOADWHAT_TEST_PEB_ENABLE", "ok");
+
+        let info = match enable_via_peb(std::ptr::null_mut()) {
+            Ok(info) => info,
+            Err(_) => panic!("PEB ok override should bypass process access"),
+        };
+
+        assert_eq!(info.ntglobalflag_offset, 0xBC);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn enable_via_peb_override_returns_decimal_error() {
+        let _lock = TEST_ENV_LOCK.lock().expect("test env lock poisoned");
+        let _guard = EnvVarGuard::set("LOADWHAT_TEST_PEB_ENABLE", "fail:123");
+
+        assert!(matches!(
+            enable_via_peb(std::ptr::null_mut()),
+            Err(PebEnableError::Win32 { code: 123, .. })
+        ));
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn enable_via_peb_override_returns_hex_error() {
+        let _lock = TEST_ENV_LOCK.lock().expect("test env lock poisoned");
+        let _guard = EnvVarGuard::set("LOADWHAT_TEST_PEB_ENABLE", "fail:0x0000007B");
+
+        assert!(matches!(
+            enable_via_peb(std::ptr::null_mut()),
+            Err(PebEnableError::Win32 { code: 123, .. })
+        ));
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn parse_test_error_code_accepts_fail_prefix() {
+        assert_eq!(super::parse_test_error_code("fail:99"), Some(99));
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn parse_test_error_code_accepts_error_prefix() {
+        assert_eq!(super::parse_test_error_code("error:99"), Some(99));
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn parse_test_error_code_accepts_hex() {
+        assert_eq!(super::parse_test_error_code("0x57"), Some(87));
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn parse_test_error_code_trims_whitespace() {
+        assert_eq!(super::parse_test_error_code("  fail: 123  "), Some(123));
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn parse_test_error_code_rejects_invalid_text() {
+        assert_eq!(super::parse_test_error_code("not-a-code"), None);
     }
 }

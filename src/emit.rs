@@ -78,3 +78,146 @@ pub fn summary_fields(first_break: bool, counts: SummaryCounts) -> Vec<(String, 
         field("com_issues", counts.com_issues.to_string()),
     ]
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{field, hex_u32, hex_usize, quote, summary_fields, SummaryCounts};
+
+    #[test]
+    fn quote_wraps_plain_text() {
+        assert_eq!(quote("kernel32.dll"), r#""kernel32.dll""#);
+    }
+
+    #[test]
+    fn quote_handles_empty_string() {
+        assert_eq!(quote(""), r#""""#);
+    }
+
+    #[test]
+    fn quote_escapes_backslashes() {
+        assert_eq!(quote(r"C:\Windows\System32"), r#""C:\\Windows\\System32""#);
+    }
+
+    #[test]
+    fn quote_escapes_double_quotes() {
+        assert_eq!(quote(r#"load "quoted" dll"#), r#""load \"quoted\" dll""#);
+    }
+
+    #[test]
+    fn quote_escapes_control_characters() {
+        assert_eq!(quote("line\nreturn\rtab\t"), r#""line\nreturn\rtab\t""#);
+    }
+
+    #[test]
+    fn quote_escapes_mixed_sequences() {
+        assert_eq!(
+            quote("C:\\tmp\\\"x\"\nnext\tend\r"),
+            r#""C:\\tmp\\\"x\"\nnext\tend\r""#
+        );
+    }
+
+    #[test]
+    fn field_builds_string_tuple_from_strs() {
+        assert_eq!(
+            field("dll", "kernel32.dll"),
+            ("dll".to_string(), "kernel32.dll".to_string())
+        );
+    }
+
+    #[test]
+    fn field_accepts_mixed_owned_and_borrowed_inputs() {
+        let key = String::from("reason");
+        assert_eq!(
+            field(key, "NOT_FOUND".to_string()),
+            ("reason".to_string(), "NOT_FOUND".to_string())
+        );
+    }
+
+    #[test]
+    fn hex_u32_formats_zero() {
+        assert_eq!(hex_u32(0), "0x00000000");
+    }
+
+    #[test]
+    fn hex_u32_formats_max() {
+        assert_eq!(hex_u32(u32::MAX), "0xFFFFFFFF");
+    }
+
+    #[test]
+    fn hex_u32_formats_typical_value() {
+        assert_eq!(hex_u32(0xC000_0135), "0xC0000135");
+    }
+
+    #[test]
+    fn hex_usize_formats_zero() {
+        assert_eq!(hex_usize(0), "0x0000000000000000");
+    }
+
+    #[test]
+    fn hex_usize_formats_typical_value() {
+        assert_eq!(hex_usize(0x1234_ABCD), "0x000000001234ABCD");
+    }
+
+    #[test]
+    fn hex_usize_uses_fixed_width_x64_style() {
+        assert_eq!(hex_usize(0xFEDC_BA98_7654_3210usize), "0xFEDCBA9876543210");
+    }
+
+    #[test]
+    fn summary_fields_reports_all_zero_counts() {
+        assert_eq!(
+            summary_fields(false, SummaryCounts::default()),
+            vec![
+                field("first_break", "false"),
+                field("static_missing", "0"),
+                field("static_bad_image", "0"),
+                field("dynamic_missing", "0"),
+                field("runtime_loaded", "0"),
+                field("com_issues", "0"),
+            ]
+        );
+    }
+
+    #[test]
+    fn summary_fields_reports_non_zero_counts() {
+        assert_eq!(
+            summary_fields(
+                true,
+                SummaryCounts {
+                    static_missing: 1,
+                    static_bad_image: 2,
+                    dynamic_missing: 3,
+                    runtime_loaded: 4,
+                    com_issues: 5,
+                },
+            ),
+            vec![
+                field("first_break", "true"),
+                field("static_missing", "1"),
+                field("static_bad_image", "2"),
+                field("dynamic_missing", "3"),
+                field("runtime_loaded", "4"),
+                field("com_issues", "5"),
+            ]
+        );
+    }
+
+    #[test]
+    fn summary_fields_preserves_contract_field_order() {
+        let keys: Vec<String> = summary_fields(true, SummaryCounts::default())
+            .into_iter()
+            .map(|(key, _)| key)
+            .collect();
+        assert_eq!(
+            keys,
+            vec![
+                "first_break",
+                "static_missing",
+                "static_bad_image",
+                "dynamic_missing",
+                "runtime_loaded",
+                "com_issues",
+            ]
+        );
+    }
+}

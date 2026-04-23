@@ -19,6 +19,9 @@ mod search;
 #[cfg(windows)]
 mod win;
 
+#[cfg(test)]
+mod test_util;
+
 #[cfg(windows)]
 use std::collections::{HashMap, HashSet, VecDeque};
 #[cfg(windows)]
@@ -1772,7 +1775,18 @@ mod static_diagnosis_tests {
     }
 
     #[test]
-    fn lowest_depth_wins() {
+    fn consider_first_issue_sets_initial_issue() {
+        let mut current = None;
+        consider_first_issue(&mut current, missing_issue("a.dll", 1, "missing.dll"));
+
+        let selected = current.expect("expected selected issue");
+        assert_eq!(selected.depth, 1);
+        assert_eq!(selected.via, "a.dll");
+        assert_eq!(selected.dll, "missing.dll");
+    }
+
+    #[test]
+    fn consider_first_issue_prefers_lower_depth() {
         let mut current = None;
         consider_first_issue(&mut current, missing_issue("b.dll", 3, "missing_x.dll"));
         consider_first_issue(&mut current, missing_issue("a.dll", 2, "missing_y.dll"));
@@ -1784,7 +1798,7 @@ mod static_diagnosis_tests {
     }
 
     #[test]
-    fn same_depth_tie_breaks_by_via_then_dll() {
+    fn consider_first_issue_breaks_ties_by_via_then_dll() {
         let mut current = None;
         consider_first_issue(&mut current, missing_issue("z.dll", 2, "missing_z.dll"));
         consider_first_issue(&mut current, missing_issue("a.dll", 2, "missing_y.dll"));
@@ -1828,15 +1842,113 @@ mod static_diagnosis_tests {
     }
 
     #[test]
-    fn ignores_api_set_import_names() {
+    fn queue_module_if_unvisited_enqueues_new_module() {
+        let temp_dir = unique_temp_dir("queue-new");
+        let module_path = temp_dir.join("LWTEST_A.DLL");
+        fs::write(&module_path, b"fixture").expect("failed to create temp module");
+
+        let mut visited = HashSet::new();
+        let mut queue = VecDeque::new();
+
+        assert!(queue_module_if_unvisited(
+            &mut visited,
+            &mut queue,
+            &module_path,
+            4
+        ));
+        assert_eq!(visited.len(), 1);
+        assert_eq!(queue.len(), 1);
+        let queued = queue.pop_front().expect("expected queued module");
+        assert_eq!(queued.module_path, module_path);
+        assert_eq!(queued.module_name, "lwtest_a.dll");
+        assert_eq!(queued.depth, 4);
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn queue_module_if_unvisited_skips_existing_module() {
+        let temp_dir = unique_temp_dir("queue-existing");
+        let module_path = temp_dir.join("lwtest_a.dll");
+        fs::write(&module_path, b"fixture").expect("failed to create temp module");
+
+        let mut visited = HashSet::new();
+        let mut queue = VecDeque::new();
+
+        assert!(queue_module_if_unvisited(
+            &mut visited,
+            &mut queue,
+            &module_path,
+            1
+        ));
+        assert!(!queue_module_if_unvisited(
+            &mut visited,
+            &mut queue,
+            &module_path,
+            2
+        ));
+        assert_eq!(queue.len(), 1);
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn is_api_set_dll_accepts_api_ms_prefix() {
         assert!(is_api_set_dll("api-ms-win-core-file-l1-2-0.dll"));
+    }
+
+    #[test]
+    fn is_api_set_dll_accepts_ext_ms_prefix() {
         assert!(is_api_set_dll("ext-ms-win-ntuser-window-l1-1-0.dll"));
     }
 
     #[test]
-    fn does_not_ignore_normal_import_names() {
+    fn is_api_set_dll_rejects_normal_names() {
         assert!(!is_api_set_dll("kernel32.dll"));
-        assert!(!is_api_set_dll("lwtest_a.dll"));
+    }
+
+    #[test]
+    fn is_api_set_dll_is_case_insensitive() {
+        assert!(is_api_set_dll("API-MS-WIN-CORE-FILE-L1-2-0.DLL"));
+        assert!(is_api_set_dll("EXT-MS-WIN-NTUSER-WINDOW-L1-1-0.DLL"));
+    }
+
+    #[test]
+    fn module_name_lower_uses_file_name() {
+        assert_eq!(
+            module_name_lower(Path::new(r"C:\App\LWTEST_A.DLL")),
+            "lwtest_a.dll"
+        );
+    }
+
+    #[test]
+    fn module_name_lower_falls_back_when_no_file_name_is_available() {
+        let path = Path::new(r"C:\");
+
+        assert_eq!(
+            module_name_lower(path),
+            path.display().to_string().to_ascii_lowercase()
+        );
+    }
+
+    #[test]
+    fn prefer_runtime_observed_path_prefers_shorter_normalized_path() {
+        assert!(prefer_runtime_observed_path(
+            Path::new(r"C:\App\a.dll"),
+            Path::new(r"C:\App\plugins\a.dll"),
+        ));
+    }
+
+    #[test]
+    fn prefer_runtime_observed_path_uses_lexicographic_tiebreak() {
+        assert!(prefer_runtime_observed_path(
+            Path::new(r"C:\App\a.dll"),
+            Path::new(r"C:\App\b.dll"),
+        ));
+        assert!(!prefer_runtime_observed_path(
+            Path::new(r"C:\App\b.dll"),
+            Path::new(r"C:\App\a.dll"),
+        ));
     }
 }
 
@@ -1864,19 +1976,160 @@ mod run_result_tests {
     }
 
     #[test]
-    fn timeout_without_runtime_progress_returns_non_diagnostic_failure() {
+    fn run_result_code_returns_10_when_diagnosis_exists() {
         assert_eq!(
-            run_result_code(&outcome(RunEndKind::Timeout, 0, None), 0),
+            run_result_code(&outcome(RunEndKind::ExitProcess, 0, Some(0)), 1),
+            10
+        );
+    }
+
+    #[test]
+    fn run_result_code_returns_0_for_clean_exit() {
+        assert_eq!(
+            run_result_code(&outcome(RunEndKind::ExitProcess, 0, Some(0)), 0),
+            0
+        );
+    }
+
+    #[test]
+    fn run_result_code_returns_0_for_timeout_after_progress() {
+        assert_eq!(
+            run_result_code(&outcome(RunEndKind::Timeout, 1, None), 0),
+            0
+        );
+    }
+
+    #[test]
+    fn run_result_code_returns_21_for_exception() {
+        assert_eq!(
+            run_result_code(&outcome(RunEndKind::Exception, 1, Some(0xC0000135)), 0),
             21
         );
     }
 
     #[test]
-    fn timeout_after_runtime_progress_keeps_current_success_like_exit_code() {
+    fn run_result_code_returns_21_for_nonzero_exit_without_diagnosis() {
         assert_eq!(
-            run_result_code(&outcome(RunEndKind::Timeout, 1, None), 0),
-            0
+            run_result_code(&outcome(RunEndKind::ExitProcess, 1, Some(1)), 0),
+            21
         );
+    }
+
+    #[test]
+    fn run_result_code_returns_21_for_timeout_without_loaded_modules() {
+        assert_eq!(
+            run_result_code(&outcome(RunEndKind::Timeout, 0, None), 0),
+            21
+        );
+    }
+}
+
+#[cfg(all(test, windows))]
+mod path_normalization_tests {
+    use super::*;
+    use crate::test_util::EnvVarGuard;
+    use crate::win::TEST_ENV_LOCK;
+    use std::env;
+    use std::fs;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_TEST_ID: AtomicU64 = AtomicU64::new(1);
+
+    fn unique_temp_dir(name: &str) -> PathBuf {
+        let id = NEXT_TEST_ID.fetch_add(1, Ordering::Relaxed);
+        let dir = env::temp_dir().join(format!("loadwhat-path-{name}-{}-{id}", std::process::id()));
+        fs::create_dir_all(&dir).expect("failed to create temp dir");
+        dir
+    }
+
+    #[test]
+    fn normalize_existing_path_rejects_missing_path() {
+        let temp_dir = unique_temp_dir("missing");
+        let missing = temp_dir.join("missing.exe");
+
+        let err = normalize_existing_path(&missing).expect_err("missing path should fail");
+
+        assert!(err.contains("path does not exist"));
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn normalize_existing_path_returns_absolute_path_when_given_absolute() {
+        let temp_dir = unique_temp_dir("absolute");
+        let file = temp_dir.join("tool.exe");
+        fs::write(&file, b"fixture").expect("failed to create temp file");
+
+        assert_eq!(
+            normalize_existing_path(&file).expect("absolute path should normalize"),
+            file
+        );
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn normalize_existing_path_resolves_relative_against_current_dir() {
+        let dir = PathBuf::from("target").join("loadwhat-unit").join(format!(
+            "relative-{}-{}",
+            std::process::id(),
+            NEXT_TEST_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&dir).expect("failed to create relative temp dir");
+        let relative = dir.join("tool.exe");
+        fs::write(&relative, b"fixture").expect("failed to create relative temp file");
+        let expected = env::current_dir()
+            .expect("failed to read current dir")
+            .join(&relative);
+
+        assert_eq!(
+            normalize_existing_path(&relative).expect("relative path should normalize"),
+            expected
+        );
+
+        let _ = fs::remove_file(&relative);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn normalize_existing_run_target_accepts_existing_path() {
+        let temp_dir = unique_temp_dir("run-existing");
+        let file = temp_dir.join("tool.exe");
+        fs::write(&file, b"fixture").expect("failed to create temp file");
+
+        assert_eq!(
+            normalize_existing_run_target(&file).expect("existing run target should normalize"),
+            file
+        );
+
+        let _ = fs::remove_dir_all(temp_dir);
+    }
+
+    #[test]
+    fn normalize_existing_run_target_adds_exe_for_single_component_name_when_found() {
+        let _lock = TEST_ENV_LOCK.lock().expect("test env lock poisoned");
+        let temp_dir = unique_temp_dir("path-search");
+        let name = format!(
+            "loadwhat_unit_target_{}_{}",
+            std::process::id(),
+            NEXT_TEST_ID.fetch_add(1, Ordering::Relaxed)
+        );
+        let exe = temp_dir.join(format!("{name}.exe"));
+        fs::write(&exe, b"fixture").expect("failed to create temp exe");
+
+        let mut path_entries = vec![temp_dir.clone()];
+        if let Some(previous_path) = env::var_os("PATH") {
+            path_entries.extend(env::split_paths(&previous_path));
+        }
+        let joined_path = env::join_paths(path_entries).expect("failed to build PATH");
+        let _path_guard = EnvVarGuard::set_os("PATH", &joined_path);
+
+        assert_eq!(
+            normalize_existing_run_target(Path::new(&name))
+                .expect("PATH run target should normalize"),
+            exe
+        );
+
+        let _ = fs::remove_dir_all(temp_dir);
     }
 }
 

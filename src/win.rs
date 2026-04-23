@@ -45,6 +45,9 @@ pub const REG_OPTION_NON_VOLATILE: Dword = 0;
 pub const ERROR_FILE_NOT_FOUND: Dword = 2;
 pub const ERROR_INVALID_PARAMETER: Dword = 87;
 
+#[cfg(test)]
+pub(crate) static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct OsVersionInfoExW {
@@ -468,4 +471,91 @@ fn try_is_wow64_process2(process: Handle) -> Result<Option<bool>, u32> {
 
     let is_wow64 = process_machine != IMAGE_FILE_MACHINE_UNKNOWN && native_machine != 0;
     Ok(Some(is_wow64))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        final_path_from_handle, is_wow64_process_best_effort, rtl_get_version,
+        safe_dll_search_mode, to_wide, utf16_slice_to_string, ERROR_INVALID_PARAMETER,
+        INVALID_HANDLE_VALUE, TEST_ENV_LOCK,
+    };
+    use crate::test_util::EnvVarGuard;
+    use std::ffi::OsStr;
+
+    #[test]
+    fn to_wide_encodes_ascii_and_appends_nul() {
+        assert_eq!(to_wide(OsStr::new("abc")), vec![97, 98, 99, 0]);
+    }
+
+    #[test]
+    fn to_wide_handles_empty_input() {
+        assert_eq!(to_wide(OsStr::new("")), vec![0]);
+    }
+
+    #[test]
+    fn to_wide_encodes_unicode() {
+        assert_eq!(
+            to_wide(OsStr::new("a\u{1F600}")),
+            vec![97, 0xD83D, 0xDE00, 0]
+        );
+    }
+
+    #[test]
+    fn utf16_slice_to_string_decodes_basic_text() {
+        assert_eq!(utf16_slice_to_string(&[0x0041, 0x0042, 0x0043]), "ABC");
+    }
+
+    #[test]
+    fn utf16_slice_to_string_decodes_surrogate_pairs() {
+        assert_eq!(utf16_slice_to_string(&[0xD83D, 0xDE00]), "\u{1F600}");
+    }
+
+    #[test]
+    fn utf16_slice_to_string_is_lossy_for_invalid_sequences() {
+        assert_eq!(utf16_slice_to_string(&[0xD800]), "\u{FFFD}");
+    }
+
+    #[test]
+    fn final_path_from_handle_returns_none_for_null_handle() {
+        assert!(final_path_from_handle(std::ptr::null_mut()).is_none());
+    }
+
+    #[test]
+    fn final_path_from_handle_returns_none_for_invalid_handle() {
+        assert!(final_path_from_handle(INVALID_HANDLE_VALUE).is_none());
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn safe_dll_search_mode_honors_false_override() {
+        let _lock = TEST_ENV_LOCK.lock().expect("test env lock poisoned");
+        let _guard = EnvVarGuard::set("LOADWHAT_TEST_SAFE_DLL_SEARCH_MODE", "0");
+
+        assert!(!safe_dll_search_mode());
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn safe_dll_search_mode_honors_true_override() {
+        let _lock = TEST_ENV_LOCK.lock().expect("test env lock poisoned");
+        let _guard = EnvVarGuard::set("LOADWHAT_TEST_SAFE_DLL_SEARCH_MODE", "1");
+
+        assert!(safe_dll_search_mode());
+    }
+
+    #[test]
+    fn rtl_get_version_returns_reasonable_version() {
+        let version = rtl_get_version().expect("RtlGetVersion should succeed on Windows");
+
+        assert!(version.major > 0);
+    }
+
+    #[test]
+    fn is_wow64_process_best_effort_rejects_null_handle() {
+        assert_eq!(
+            is_wow64_process_best_effort(std::ptr::null_mut()).err(),
+            Some(ERROR_INVALID_PARAMETER)
+        );
+    }
 }
