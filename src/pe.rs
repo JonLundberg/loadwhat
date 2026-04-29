@@ -4,6 +4,18 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
+const IMAGE_FILE_MACHINE_I386: u16 = 0x014C;
+const IMAGE_FILE_MACHINE_AMD64: u16 = 0x8664;
+const OPTIONAL_HEADER_MAGIC_PE32: u16 = 0x010B;
+const OPTIONAL_HEADER_MAGIC_PE32_PLUS: u16 = 0x020B;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ImageArchitecture {
+    X64,
+    X86,
+    Other { machine: u16, magic: u16 },
+}
+
 #[derive(Clone, Copy)]
 struct Section {
     virtual_address: u32,
@@ -18,11 +30,10 @@ pub fn direct_imports(module_path: &Path) -> Result<Vec<String>, String> {
     direct_imports_from_bytes(&data)
 }
 
-pub fn is_probably_pe_file(module_path: &Path) -> bool {
-    let Ok(data) = fs::read(module_path) else {
-        return false;
-    };
-    parse_pe_layout(&data).is_ok()
+pub fn image_architecture(module_path: &Path) -> Result<ImageArchitecture, String> {
+    let data = fs::read(module_path)
+        .map_err(|e| format!("failed to read {}: {e}", module_path.display()))?;
+    Ok(parse_pe_layout(&data)?.architecture)
 }
 
 fn direct_imports_from_bytes(data: &[u8]) -> Result<Vec<String>, String> {
@@ -67,6 +78,7 @@ fn direct_imports_from_bytes(data: &[u8]) -> Result<Vec<String>, String> {
 }
 
 struct PeLayout {
+    architecture: ImageArchitecture,
     import_rva: u32,
     sections: Vec<Section>,
 }
@@ -89,6 +101,7 @@ fn parse_pe_layout(data: &[u8]) -> Result<PeLayout, String> {
         return Err("missing PE signature".to_string());
     }
 
+    let machine = read_u16(data, pe_offset + 4)?;
     let number_of_sections = read_u16(data, pe_offset + 6)? as usize;
     let size_of_optional_header = read_u16(data, pe_offset + 20)? as usize;
     let optional_header_off = pe_offset + 24;
@@ -102,8 +115,8 @@ fn parse_pe_layout(data: &[u8]) -> Result<PeLayout, String> {
 
     let magic = read_u16(data, optional_header_off)?;
     let data_dir_start = match magic {
-        0x010B => optional_header_off + 96,
-        0x020B => optional_header_off + 112,
+        OPTIONAL_HEADER_MAGIC_PE32 => optional_header_off + 96,
+        OPTIONAL_HEADER_MAGIC_PE32_PLUS => optional_header_off + 112,
         _ => return Err("unsupported optional header format".to_string()),
     };
 
@@ -137,9 +150,18 @@ fn parse_pe_layout(data: &[u8]) -> Result<PeLayout, String> {
     }
 
     Ok(PeLayout {
+        architecture: image_architecture_from_headers(machine, magic),
         import_rva,
         sections,
     })
+}
+
+fn image_architecture_from_headers(machine: u16, magic: u16) -> ImageArchitecture {
+    match (machine, magic) {
+        (IMAGE_FILE_MACHINE_AMD64, OPTIONAL_HEADER_MAGIC_PE32_PLUS) => ImageArchitecture::X64,
+        (IMAGE_FILE_MACHINE_I386, OPTIONAL_HEADER_MAGIC_PE32) => ImageArchitecture::X86,
+        _ => ImageArchitecture::Other { machine, magic },
+    }
 }
 
 fn rva_to_offset(rva: u32, sections: &[Section]) -> Option<usize> {
@@ -206,6 +228,10 @@ mod tests {
     }
 
     fn build_test_pe(imports: &[&str]) -> BuiltPe {
+        build_test_pe_with_headers(imports, 0x8664, 0x020B)
+    }
+
+    fn build_test_pe_with_headers(imports: &[&str], machine: u16, magic: u16) -> BuiltPe {
         let descriptor_bytes = (imports.len() + 1) * 20;
         let strings_bytes: usize = imports.iter().map(|name| name.len() + 1).sum();
         let section_size = descriptor_bytes.max(1) + strings_bytes.max(1);
@@ -216,7 +242,7 @@ mod tests {
         write_u32(&mut bytes, 0x3C, PE_OFFSET as u32);
 
         bytes[PE_OFFSET..PE_OFFSET + 4].copy_from_slice(b"PE\0\0");
-        write_u16(&mut bytes, PE_OFFSET + 4, 0x8664);
+        write_u16(&mut bytes, PE_OFFSET + 4, machine);
         write_u16(&mut bytes, NUMBER_OF_SECTIONS_OFFSET, 1);
         write_u16(
             &mut bytes,
@@ -224,17 +250,18 @@ mod tests {
             OPTIONAL_HEADER_SIZE,
         );
 
-        write_u16(&mut bytes, OPTIONAL_HEADER_OFFSET, 0x020B);
+        write_u16(&mut bytes, OPTIONAL_HEADER_OFFSET, magic);
+        let data_dir_start = data_dir_start_for_magic(magic);
         write_u32(
             &mut bytes,
-            IMPORT_DIRECTORY_RVA_OFFSET,
+            data_dir_start + 8,
             if imports.is_empty() {
                 0
             } else {
                 SECTION_VIRTUAL_ADDRESS
             },
         );
-        write_u32(&mut bytes, DATA_DIR_START + 12, descriptor_bytes as u32);
+        write_u32(&mut bytes, data_dir_start + 12, descriptor_bytes as u32);
 
         bytes[SECTION_TABLE_OFFSET..SECTION_TABLE_OFFSET + 6].copy_from_slice(b".rdata");
         write_u32(&mut bytes, SECTION_TABLE_OFFSET + 8, section_size as u32);
@@ -267,6 +294,13 @@ mod tests {
             bytes,
             descriptor_offsets,
             name_offsets,
+        }
+    }
+
+    fn data_dir_start_for_magic(magic: u16) -> usize {
+        match magic {
+            0x010B => OPTIONAL_HEADER_OFFSET + 96,
+            _ => DATA_DIR_START,
         }
     }
 
@@ -448,6 +482,45 @@ mod tests {
                 "kernel32.dll".to_string(),
                 "z.dll".to_string(),
             ]
+        );
+    }
+
+    #[test]
+    fn image_architecture_detects_x64() {
+        let pe = build_test_pe(&[]);
+        assert_eq!(
+            parse_pe_layout(&pe.bytes).unwrap().architecture,
+            ImageArchitecture::X64
+        );
+    }
+
+    #[test]
+    fn image_architecture_detects_x86() {
+        let pe = build_test_pe_with_headers(&[], 0x014C, 0x010B);
+        assert_eq!(
+            parse_pe_layout(&pe.bytes).unwrap().architecture,
+            ImageArchitecture::X86
+        );
+    }
+
+    #[test]
+    fn image_architecture_marks_machine_magic_mismatch_as_other() {
+        let pe = build_test_pe_with_headers(&[], 0x014C, 0x020B);
+        assert_eq!(
+            parse_pe_layout(&pe.bytes).unwrap().architecture,
+            ImageArchitecture::Other {
+                machine: 0x014C,
+                magic: 0x020B
+            }
+        );
+    }
+
+    #[test]
+    fn direct_imports_supports_pe32_layout_for_detection_plumbing() {
+        let pe = build_test_pe_with_headers(&["Kernel32.dll"], 0x014C, 0x010B);
+        assert_eq!(
+            direct_imports_from_bytes(&pe.bytes).unwrap(),
+            vec!["kernel32.dll".to_string()]
         );
     }
 }

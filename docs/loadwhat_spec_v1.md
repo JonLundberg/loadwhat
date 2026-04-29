@@ -89,7 +89,7 @@ Purpose:
 Rules:
 
 - Always on during `run` Phase B and in `imports`.
-- Uses the same fixed v1 search order and SafeDllSearchMode behavior (§4).
+- Uses the same fixed v1 search order and SafeDllSearchMode behavior (Â§4).
 - Missing-focused: failures-only mode may stop as soon as the tool can report the first missing DLL.
 
 Algorithm (deterministic BFS):
@@ -98,7 +98,7 @@ Algorithm (deterministic BFS):
 2. Parse direct import table.
 3. For each imported DLL name:
    - Ignore API sets: `api-ms-win-*`, `ext-ms-win-*`.
-   - Resolve via §4 search order.
+   - Resolve via Â§4 search order.
    - If not found: record missing `{ dll, depth=parent+1, via=parent module }`.
    - If found: enqueue resolved module for scanning at `depth=parent+1`.
 4. Maintain `visited` set keyed by normalized absolute path.
@@ -138,7 +138,7 @@ When inference succeeds:
 
 If search context cannot be built, emit only `DYNAMIC_MISSING`.
 
-When `SEARCH_ORDER` / `SEARCH_PATH` are emitted for a dynamic failure, they are produced from the fixed v1 search model in §4. They are diagnostic reconstructions, not a claim that every Windows loader mode or `LoadLibraryEx` variant used that exact runtime search order.
+When `SEARCH_ORDER` / `SEARCH_PATH` are emitted for a dynamic failure, they are produced from the fixed v1 search model in Â§4. They are diagnostic reconstructions, not a claim that every Windows loader mode or `LoadLibraryEx` variant used that exact runtime search order.
 
 #### Dynamic candidate selection rules
 
@@ -179,6 +179,8 @@ Restoration is best effort for all terminal paths.
 - Detect Windows `major.minor.build` using `RtlGetVersion` (not `GetVersionEx`).
 - v1 is x64-only:
   - If the target is WOW64, treat as unsupported (exit code `22`) and emit a `NOTE` that WOW64 target support is roadmap-only.
+  - `run --no-loader-snaps` is still x64-only and must reject x86/WOW64 targets before launch.
+  - `imports` roots are also x64-only in v1.
 - For x64 target:
   - Read `PebBaseAddress` from `NtQueryInformationProcess(ProcessBasicInformation)`.
   - Select `NtGlobalFlagOffset` using detected OS version where possible.
@@ -303,7 +305,7 @@ Required token families in v1:
 
 ## 6) `imports` behavior
 
-`imports` runs direct import scanning for `<exe_or_dll>` and also performs the recursive missing-dependency walk described in §2, resolving imports with the same fixed search order and SafeDllSearchMode behavior and emitting static/search tokens. The `imports` command uses the same fixed v1 model from §4 and does not attempt to emulate alternate Windows loader search modes.
+`imports` runs direct import scanning for `<exe_or_dll>` and also performs the recursive missing-dependency walk described in Â§2, resolving imports with the same fixed search order and SafeDllSearchMode behavior and emitting static/search tokens. The `imports` command uses the same fixed v1 model from Â§4 and does not attempt to emulate alternate Windows loader search modes.
 
 ## 7) Exit codes
 
@@ -311,7 +313,7 @@ Required token families in v1:
 - `10` = missing/bad image issue detected (`run` static/dynamic diagnosis or `imports`)
 - `20` = usage error
 - `21` = cannot launch/debug target, or non-diagnostic failure without a public diagnosis token (including loader-snaps setup failure and timeout before meaningful runtime progress)
-- `22` = unsupported architecture
+- `22` = unsupported architecture, including x86/WOW64 roots in v1
 
 ## 8) Constraints
 
@@ -319,3 +321,19 @@ Required token families in v1:
 - single executable
 - direct Win32 debug APIs
 - no fabricated diagnostics (DLL names/paths/results must come from direct observation or deterministic scan/inference rules above)
+
+## 9) Pre-v2 architecture hardening
+
+V1 may use internal PE architecture detection to enforce the x64-only contract and prepare for planned v2 x86/WOW64 support.
+
+Internal classification:
+
+- x64 = `IMAGE_FILE_MACHINE_AMD64` (`0x8664`) with PE32+ optional header (`0x020B`)
+- x86 = `IMAGE_FILE_MACHINE_I386` (`0x014C`) with PE32 optional header (`0x010B`)
+- any mismatched machine/magic pair is not a compatible x64 image
+
+Behavior:
+
+- x86/WOW64 roots are rejected in v1 with exit `22`.
+- When static search finds an x86 DLL in an x64 dependency chain, report it as `STATIC_BAD_IMAGE`, not `STATIC_FOUND`.
+- No new public token family is introduced for this hardening.

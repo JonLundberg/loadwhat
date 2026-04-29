@@ -18,7 +18,7 @@ This document specifies new integration tests for `loadwhat`. Each test has enou
 
 ### Architecture in One Paragraph
 
-`loadwhat` is a Windows x64 CLI that diagnoses DLL loading failures. It runs in three phases: **Phase A** launches the target under a debug loop and captures loaded modules + debug strings. **Phase B** does a static BFS walk of PE import tables to find missing/bad-image DLLs. **Phase C** heuristically infers `LoadLibrary` failures from captured loader-snaps debug strings. Phases B and C are fallbacks — B triggers only on early failure, C triggers only if B found nothing.
+`loadwhat` is a Windows x64 CLI that diagnoses DLL loading failures. It runs in three phases: **Phase A** launches the target under a debug loop and captures loaded modules + debug strings. **Phase B** does a static BFS walk of PE import tables to find missing/bad-image DLLs. **Phase C** heuristically infers `LoadLibrary` failures from captured loader-snaps debug strings. Phases B and C are fallbacks â€” B triggers only on early failure, C triggers only if B found nothing.
 
 ### Test Infrastructure
 
@@ -66,7 +66,7 @@ use std::time::Duration;
 |----------|-------------|
 | `HOST_STATIC_IMPORTS_A_EXE` | EXE that statically imports `lwtest_a.dll` (no missing deps when provided) |
 | `HOST_STATIC_IMPORTS_MISSING_EXE` | EXE that statically imports `lwtest_a.dll` (designed to test missing) |
-| `HOST_STATIC_A_DEPENDS_ON_B_EXE` | EXE → `lwtest_a.dll` → `lwtest_b.dll` (chain) |
+| `HOST_STATIC_A_DEPENDS_ON_B_EXE` | EXE â†’ `lwtest_a.dll` â†’ `lwtest_b.dll` (chain) |
 | `HOST_DYNAMIC_LOADLIBRARY_NAME_EXE` | EXE that calls `LoadLibrary` by name (DLL name passed as arg) |
 | `HOST_DYNAMIC_LOADLIBRARY_FULLPATH_EXE` | EXE that calls `LoadLibrary` with full path (path passed as arg) |
 | `HOST_DYNAMIC_LOADLIBRARY_NESTED_EXE` | EXE with nested `LoadLibrary` calls |
@@ -80,7 +80,7 @@ use std::time::Duration;
 
 ### Synthetic PE Builder
 
-`harness::pe_builder::write_import_test_pe(path, &["imports..."])` creates a minimal x64 PE file with the specified import table. These PEs are structurally valid but are **not executable** — they're for `loadwhat imports` (static analysis) only, not `loadwhat run`.
+`harness::pe_builder::write_import_test_pe(path, &["imports..."])` creates a minimal x64 PE file with the specified import table. These PEs are structurally valid but are **not executable** â€” they're for `loadwhat imports` (static analysis) only, not `loadwhat run`.
 
 `harness::pe_builder::build_import_test_pe(imports)` returns `Vec<u8>` for manual mutation before writing.
 
@@ -122,16 +122,16 @@ fn token_lines(stdout: &str) -> Vec<&str> {
 
 ### Output Token Families
 
-- **Summary mode** (default): Single line — `STATIC_MISSING`, `STATIC_BAD_IMAGE`, `DYNAMIC_MISSING`, or `SUCCESS status=0`
+- **Summary mode** (default): Single line â€” `STATIC_MISSING`, `STATIC_BAD_IMAGE`, `DYNAMIC_MISSING`, or `SUCCESS status=0`
 - **Trace mode** (`--trace`): Adds `SEARCH_ORDER`, `SEARCH_PATH` lines
 - **Verbose mode** (`-v`): Adds `RUN_START`, `RUNTIME_LOADED`, `RUN_END`, `DEBUG_STRING`, `FIRST_BREAK`, `SUMMARY`
 
 ### Internal Test Mode
 
 When `LOADWHAT_TEST_MODE=1` (used by `run()` / `run_with_env()`), loadwhat emits extra `LWTEST:*` lines:
-- `LWTEST:RESULT kind=missing_dll name=<dll>` — first detected missing lwtest_* dll
-- `LWTEST:TARGET exit_code=<N>` — target process exit code
-- `LWTEST:LOAD name=<dll> path=<path>` — loaded lwtest_* dll with path
+- `LWTEST:RESULT kind=missing_dll name=<dll>` â€” first detected missing lwtest_* dll
+- `LWTEST:TARGET exit_code=<N>` â€” target process exit code
+- `LWTEST:LOAD name=<dll> path=<path>` â€” loaded lwtest_* dll with path
 
 ---
 
@@ -182,7 +182,7 @@ Tests for malformed and corrupted PE files through both `imports` and `run` pipe
 
 #### Test 3: `imports_transitive_corrupt_pe_skips_node_and_continues`
 
-**What:** An import chain `root.exe → good.dll → corrupt.dll` where `corrupt.dll` has valid MZ+PE headers but a corrupted import table. Phase B should report `corrupt.dll` as `BAD_IMAGE` or skip it gracefully.
+**What:** An import chain `root.exe â†’ good.dll â†’ corrupt.dll` where `corrupt.dll` has valid MZ+PE headers but a corrupted import table. Phase B should report `corrupt.dll` as `BAD_IMAGE` or skip it gracefully.
 
 **Setup:**
 1. Create `root.exe` via `write_import_test_pe(&["good.dll"])`.
@@ -218,7 +218,7 @@ Tests for malformed and corrupted PE files through both `imports` and `run` pipe
 
 #### Test 5: `imports_junk_bytes_dll_in_chain_reports_bad_image`
 
-**What:** `root.exe → lwtest_a.dll` where `lwtest_a.dll` is junk bytes (not PE at all). This is what the existing bad_image tests do, but this test uses a synthetic PE root and runs through `imports` (not `run`).
+**What:** `root.exe â†’ lwtest_a.dll` where `lwtest_a.dll` is junk bytes (not PE at all). This is what the existing bad_image tests do, but this test uses a synthetic PE root and runs through `imports` (not `run`).
 
 **Setup:**
 1. Create `root.exe` via `write_import_test_pe(&["lwtest_a.dll"])`.
@@ -234,7 +234,7 @@ Tests for malformed and corrupted PE files through both `imports` and `run` pipe
 
 #### Test 6: `imports_pe32_dll_in_x64_chain_reports_bad_image`
 
-> **SKIP — Needs answer:** Does `pe::is_probably_pe_file` check machine type (0x8664 for x64 vs 0x14C for x86)? If it only checks structural validity, a PE32 file would be classified as `Found` not `BadImage`, making this test incorrect. **Verify by reading `is_probably_pe_file` in `src/pe.rs` before implementing.** If it doesn't check machine type, this test should be filed as a feature request instead.
+> **Implemented:** Covered by `architecture_cleanup::imports_x64_chain_reports_x86_dependency_as_bad_image`. `pe::image_architecture` now checks machine type and optional-header magic; v1 classifies x86 DLLs in x64 chains as `STATIC_BAD_IMAGE`.
 
 ---
 
@@ -251,7 +251,7 @@ Tests that non-loader crashes do not produce false DLL diagnoses.
 **Setup:**
 1. Use `HOST_ECHO_ARGV_CWD_EXE` with `--lwtest-exit-code 3221225477` (0xC0000005 = ACCESS_VIOLATION as unsigned i32 wrapping).
 
-> **SKIP — Needs answer:** Does `HOST_ECHO_ARGV_CWD_EXE` support triggering an actual access violation (SEH exception), or only `ExitProcess(code)`? If it only calls `ExitProcess`, the exception code in the debug loop will be different from a real AV. The existing test `unrelated_non_loader_failure_does_not_invent_dll_diagnoses` uses exit code 7 — this tests a higher exit code. **A new fixture that deliberately dereferences null may be needed for a true AV test.** If the echo fixture only supports `ExitProcess`, implement this test using `--lwtest-exit-code` with a large non-loader code (e.g., `42`) and note that a real AV fixture is a future TODO.
+> **SKIP â€” Needs answer:** Does `HOST_ECHO_ARGV_CWD_EXE` support triggering an actual access violation (SEH exception), or only `ExitProcess(code)`? If it only calls `ExitProcess`, the exception code in the debug loop will be different from a real AV. The existing test `unrelated_non_loader_failure_does_not_invent_dll_diagnoses` uses exit code 7 â€” this tests a higher exit code. **A new fixture that deliberately dereferences null may be needed for a true AV test.** If the echo fixture only supports `ExitProcess`, implement this test using `--lwtest-exit-code` with a large non-loader code (e.g., `42`) and note that a real AV fixture is a future TODO.
 
 **Fallback implementation** (using echo fixture with non-loader exit code):
 
@@ -264,7 +264,7 @@ Tests that non-loader crashes do not produce false DLL diagnoses.
 **Acceptance Criteria (fallback):**
 - Exit code: **21**
 - No `STATIC_MISSING`, `STATIC_BAD_IMAGE`, `DYNAMIC_MISSING` in output.
-- `token_lines` may contain `SUCCESS` or nothing — either is acceptable as long as no false DLL diagnosis appears.
+- `token_lines` may contain `SUCCESS` or nothing â€” either is acceptable as long as no false DLL diagnosis appears.
 
 ---
 
@@ -321,9 +321,9 @@ Tests the Phase B early-exit heuristic boundary conditions.
 **Setup:**
 1. Use `HOST_DYNAMIC_LOADLIBRARY_SEQUENCE_EXE`.
 2. Copy `DLL_LWTEST_A` to app dir as a dependency.
-3. Args: `run --cwd <app_dir> <exe> sleep:2000` — this loads OK then sleeps 2s.
+3. Args: `run --cwd <app_dir> <exe> sleep:2000` â€” this loads OK then sleeps 2s.
 
-> **SKIP — Needs answer:** `HOST_DYNAMIC_LOADLIBRARY_SEQUENCE_EXE` exits with code 0 after completing its sequence. To test Phase B heuristic suppression we need a target that runs > 1.5s AND exits non-zero. Does the sequence host support a way to set exit code? (e.g., via an `exit:N` arg prefix.) If not, a new fixture or fixture enhancement is needed. **Check the fixture source before implementing.**
+> **SKIP â€” Needs answer:** `HOST_DYNAMIC_LOADLIBRARY_SEQUENCE_EXE` exits with code 0 after completing its sequence. To test Phase B heuristic suppression we need a target that runs > 1.5s AND exits non-zero. Does the sequence host support a way to set exit code? (e.g., via an `exit:N` arg prefix.) If not, a new fixture or fixture enhancement is needed. **Check the fixture source before implementing.**
 
 ---
 
@@ -331,7 +331,7 @@ Tests the Phase B early-exit heuristic boundary conditions.
 
 **What:** A target exits with code 1 in < 1.5s but loads more than 6 modules. The module-count check (`<= 6`) should prevent Phase B from triggering.
 
-> **SKIP — Needs answer:** Same fixture limitation as Test 10. Also, loading > 6 distinct DLLs requires either many test DLLs or a fixture that loads system DLLs explicitly. **Defer until fixture capabilities are extended.**
+> **SKIP â€” Needs answer:** Same fixture limitation as Test 10. Also, loading > 6 distinct DLLs requires either many test DLLs or a fixture that loads system DLLs explicitly. **Defer until fixture capabilities are extended.**
 
 ---
 
@@ -341,7 +341,7 @@ Tests the Phase B early-exit heuristic boundary conditions.
 
 #### Test 12: `imports_circular_dependency_terminates`
 
-**What:** Two DLLs that import each other: `a.dll → b.dll` and `b.dll → a.dll`. The BFS visited set should prevent infinite recursion.
+**What:** Two DLLs that import each other: `a.dll â†’ b.dll` and `b.dll â†’ a.dll`. The BFS visited set should prevent infinite recursion.
 
 **Setup:**
 1. Create `root.exe` via `write_import_test_pe(&["a.dll"])`.
@@ -364,7 +364,7 @@ Tests the Phase B early-exit heuristic boundary conditions.
 
 #### Test 13: `imports_deep_transitive_chain_reports_correct_depth`
 
-**What:** A chain 5 levels deep: `root.exe → a.dll → b.dll → c.dll → d.dll → missing.dll`. Verify depth tracking is correct.
+**What:** A chain 5 levels deep: `root.exe â†’ a.dll â†’ b.dll â†’ c.dll â†’ d.dll â†’ missing.dll`. Verify depth tracking is correct.
 
 **Setup:**
 1. Create each PE with `write_import_test_pe`:
@@ -402,7 +402,7 @@ Tests the Phase B early-exit heuristic boundary conditions.
 - The first `STATIC_MISSING` line references `dll="a_missing.dll"` (alphabetically first).
 - In **trace mode** (`imports --cwd <dir> root.exe` with output parsed): both `a_missing.dll` and `z_missing.dll` should appear as `STATIC_MISSING`.
 
-**Implementation Note:** Run twice — once in default mode to check first-issue selection, once with trace output to verify both are reported. The `imports` command always emits in Full mode, so a single run should show both STATIC_MISSING lines. Check the output for both.
+**Implementation Note:** Run twice â€” once in default mode to check first-issue selection, once with trace output to verify both are reported. The `imports` command always emits in Full mode, so a single run should show both STATIC_MISSING lines. Check the output for both.
 
 ---
 
@@ -441,8 +441,8 @@ Tests the Phase B early-exit heuristic boundary conditions.
 2. Create `app/` dir with the exe.
 3. Create `good/lwtest_probe.dll` (copy from `DLL_LWTEST_A_V1`).
 4. Args: `run --cwd <app_dir> <exe> optional:lwtest_probe.dll <full_path_to_good/lwtest_probe.dll>`
-   - First call: `LoadLibrary("lwtest_probe.dll")` — fails (not in app dir)
-   - Second call: `LoadLibrary("<full_path>")` — succeeds
+   - First call: `LoadLibrary("lwtest_probe.dll")` â€” fails (not in app dir)
+   - Second call: `LoadLibrary("<full_path>")` â€” succeeds
 5. Copy `DLL_LWTEST_B` to `app/` as `lwtest_b.dll` if needed for transitive deps.
 
 **Acceptance Criteria:**
@@ -486,7 +486,7 @@ Tests the Phase B early-exit heuristic boundary conditions.
 
 #### Test 19: `cli_timeout_zero_is_accepted`
 
-> **SKIP — Needs answer:** What is the expected behavior for `--timeout-ms 0`? Looking at the source, `timeout_ms == 0` means "no timeout" (waits indefinitely with 250ms poll). If the target exits quickly this is fine, but this needs confirmation. **If `0` means no timeout, this test should use a fast-exiting target and assert success. If `0` means immediate timeout, it should assert `SUCCESS` with `exit_kind="TIMEOUT"`.** Verify the `run_target` function behavior before implementing.
+> **SKIP â€” Needs answer:** What is the expected behavior for `--timeout-ms 0`? Looking at the source, `timeout_ms == 0` means "no timeout" (waits indefinitely with 250ms poll). If the target exits quickly this is fine, but this needs confirmation. **If `0` means no timeout, this test should use a fast-exiting target and assert success. If `0` means immediate timeout, it should assert `SUCCESS` with `exit_kind="TIMEOUT"`.** Verify the `run_target` function behavior before implementing.
 
 ---
 
@@ -525,14 +525,14 @@ Tests the Phase B early-exit heuristic boundary conditions.
 
 #### Test 22: `dynamic_transitive_init_failure_diagnosed_by_phase_c`
 
-**What:** A → B where B's DllMain returns FALSE. The failure is transitive (A dynamically loads B). Phase C should diagnose B's init failure.
+**What:** A â†’ B where B's DllMain returns FALSE. The failure is transitive (A dynamically loads B). Phase C should diagnose B's init failure.
 
 **Setup:**
 1. Use `HOST_DYNAMIC_LOADLIBRARY_NESTED_EXE`.
 2. Copy `DLL_LWTEST_A_NESTED` as `lwtest_a.dll` in app dir.
 3. Copy `DLL_LWTEST_A_INITFAIL` as `lwtest_b.dll` in app dir (this is the DLL that `lwtest_a_nested` will try to load).
 
-> **SKIP — Needs answer:** Does `DLL_LWTEST_A_NESTED` load `lwtest_b.dll` by name? What DLL name does it attempt to load? **Check the fixture source to determine the exact DLL name the nested loader requests.** The harness fixture `DLL_LWTEST_A_NESTED` description says "DLL that itself calls LoadLibrary" but the target name isn't documented. If it loads `lwtest_b.dll`, this test works as described. Otherwise adjust the filename.
+> **SKIP â€” Needs answer:** Does `DLL_LWTEST_A_NESTED` load `lwtest_b.dll` by name? What DLL name does it attempt to load? **Check the fixture source to determine the exact DLL name the nested loader requests.** The harness fixture `DLL_LWTEST_A_NESTED` description says "DLL that itself calls LoadLibrary" but the target name isn't documented. If it loads `lwtest_b.dll`, this test works as described. Otherwise adjust the filename.
 
 ---
 
@@ -572,7 +572,7 @@ Tests the Phase B early-exit heuristic boundary conditions.
 **Acceptance Criteria:**
 - Exit code: **10**
 - Output contains `STATIC_BAD_IMAGE` with `dll="target.dll"`.
-- No `STATIC_FOUND` for `target.dll` (the later valid copy should NOT be found — search stops at bad image).
+- No `STATIC_FOUND` for `target.dll` (the later valid copy should NOT be found â€” search stops at bad image).
 - If trace output is examined, `SEARCH_PATH` for `target.dll` should show the early path with `result="BAD_IMAGE"`.
 
 ---
@@ -620,7 +620,7 @@ Tests the Phase B early-exit heuristic boundary conditions.
 **Acceptance Criteria:**
 - Exit code: **10**
 - Output contains exactly **one** `STATIC_BAD_IMAGE` line for `shared_bad.dll`.
-- The `module=` field in that line should reference whichever parent is visited first in BFS (either `a.dll` or `b.dll` — but it must be stable across runs).
+- The `module=` field in that line should reference whichever parent is visited first in BFS (either `a.dll` or `b.dll` â€” but it must be stable across runs).
 - Run twice and assert both outputs are identical.
 
 ---
@@ -640,7 +640,7 @@ Tests the Phase B early-exit heuristic boundary conditions.
 4. Args: sequence loads `bad_image.dll` (full path) then `lwtest_missing.dll` (by name).
    - `run --cwd <app_dir> <exe> <full_path_to_bad_image.dll> lwtest_missing.dll`
 
-> **SKIP — Needs answer:** The Phase C candidate ranking sorts by `DynamicCandidateKind` first, then score. Both NOT_FOUND and BAD_IMAGE can produce `UnableToLoadDll` kind depending on the debug string pattern. The actual precedence depends on which debug strings the Windows loader emits for each failure type. **This test requires verifying what debug strings Windows actually produces for each failure mode.** Implement after capturing real loader-snaps output for both failure types on the target Windows version.
+> **SKIP â€” Needs answer:** The Phase C candidate ranking sorts by `DynamicCandidateKind` first, then score. Both NOT_FOUND and BAD_IMAGE can produce `UnableToLoadDll` kind depending on the debug string pattern. The actual precedence depends on which debug strings the Windows loader emits for each failure type. **This test requires verifying what debug strings Windows actually produces for each failure mode.** Implement after capturing real loader-snaps output for both failure types on the target Windows version.
 
 ---
 
@@ -706,13 +706,12 @@ Tests the Phase B early-exit heuristic boundary conditions.
 
 | Test | Reason | What To Resolve |
 |------|--------|-----------------|
-| **Test 6** — PE32 DLL in x64 chain | Unknown if `is_probably_pe_file` checks machine type | Read `pe.rs` `is_probably_pe_file` impl; if it doesn't check, file a feature request |
-| **Test 7** — Real access violation | `HOST_ECHO_ARGV_CWD_EXE` may not support triggering real AV | Check fixture source; may need new fixture. Fallback test provided. |
-| **Test 10** — Non-zero exit after long runtime | Sequence host may not support setting exit codes | Check if `exit:N` arg prefix exists in fixture source |
-| **Test 11** — Fast exit with many modules | Needs > 6 DLLs loaded + non-zero exit | Needs fixture enhancement |
-| **Test 19** — `--timeout-ms 0` behavior | Ambiguous: no-timeout vs. immediate-timeout | Read `run_target` in `debug_run.rs` to confirm |
-| **Test 22** — Transitive init failure | Unknown what DLL name `DLL_LWTEST_A_NESTED` loads | Check nested fixture source |
-| **Test 27** — NOT_FOUND vs BAD_IMAGE precedence | Depends on actual Windows loader-snaps output | Capture real debug strings on target OS first |
+| **Test 7** â€” Real access violation | `HOST_ECHO_ARGV_CWD_EXE` may not support triggering real AV | Check fixture source; may need new fixture. Fallback test provided. |
+| **Test 10** â€” Non-zero exit after long runtime | Sequence host may not support setting exit codes | Check if `exit:N` arg prefix exists in fixture source |
+| **Test 11** â€” Fast exit with many modules | Needs > 6 DLLs loaded + non-zero exit | Needs fixture enhancement |
+| **Test 19** â€” `--timeout-ms 0` behavior | Ambiguous: no-timeout vs. immediate-timeout | Read `run_target` in `debug_run.rs` to confirm |
+| **Test 22** â€” Transitive init failure | Unknown what DLL name `DLL_LWTEST_A_NESTED` loads | Check nested fixture source |
+| **Test 27** â€” NOT_FOUND vs BAD_IMAGE precedence | Depends on actual Windows loader-snaps output | Capture real debug strings on target OS first |
 
 ---
 

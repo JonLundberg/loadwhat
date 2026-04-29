@@ -116,6 +116,9 @@ Current v1 position:
 
 - x64-only target support
 - WOW64 targets exit with `22`
+- `run --no-loader-snaps` still rejects x86/WOW64 roots before launch
+- `imports` roots are x64-only in v1
+- x86 DLLs found in x64 dependency chains are `STATIC_BAD_IMAGE`
 
 Why it may hold up development:
 
@@ -123,9 +126,10 @@ Why it may hold up development:
 - it blocks expanding fixture coverage to mixed-arch scenarios
 - it forces hard failure where partial diagnostic value might still be possible
 
-Review question:
+Current planning answer:
 
-- should WOW64 remain a hard v1 boundary, or is it ready to graduate from roadmap to planned implementation work
+- WOW64 remains a hard v1 boundary.
+- x86/WOW64 support is planned for v2 in `docs/loadwhat_spec_v2.md`.
 
 ### 2. DLL search modeling is intentionally incomplete
 

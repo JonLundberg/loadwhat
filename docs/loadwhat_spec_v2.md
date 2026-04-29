@@ -1,10 +1,12 @@
-# loadwhat v2 Draft Spec
+# loadwhat v2 Spec Draft
 
-Status: draft for planned COM support.
+Status: draft for planned x86/WOW64 support.
 
 This document is not the source of truth for current implemented behavior. Current behavior remains defined by [docs/loadwhat_spec_v1.md](./loadwhat_spec_v1.md).
 
-Purpose: extend `loadwhat` with deterministic COM registration and activation-prerequisite diagnosis without changing the v1 behavior of `run` or `imports`.
+Purpose: extend `loadwhat` from an x64-target-only diagnostic tool to a single Windows x64 executable that diagnoses DLL loading failures for both x64 and x86 targets.
+
+COM is not part of v2. Future COM planning lives in [docs/COM_Plan.md](./COM_Plan.md).
 
 Output remains line-oriented and greppable:
 
@@ -12,347 +14,164 @@ Output remains line-oriented and greppable:
 TOKEN key=value key=value ...
 ```
 
-## 1) CLI
+## 1) Scope
 
-### COM commands
-
-```text
-loadwhat com clsid [OPTIONS] <{CLSID}>
-loadwhat com progid [OPTIONS] <PROGID>
-loadwhat com server [OPTIONS] <PATH>
-loadwhat com audit [OPTIONS] <TARGET> <{CLSID}|PROGID>
-```
-
-### Common COM options
-
-- Default mode is summary mode.
-- `--trace` enables supporting COM tokens.
-- `-v` / `--verbose` is accepted and behaves the same as `--trace` for COM commands.
-- Later flags win per dimension: `--trace` vs `--summary`.
-
-### View-selection options
-
-- `com clsid` and `com progid`:
+V2 keeps the existing commands:
 
 ```text
---view 64
---view 32
+loadwhat run [OPTIONS] <TARGET> [TARGET_ARGS...]
+loadwhat imports <exe_or_dll> [--cwd <dir>]
 ```
 
-- Default is `--view 64`.
-- `com server` accepts `--view 64`, `--view 32`, or `--view both`.
-- Default for `com server` is `--view both`.
-- `com audit` does not accept `--view`; it derives the effective registry view from the target image machine type.
-- In `com audit`, a braced GUID argument is treated as a CLSID query; any other argument is treated as a ProgID query.
+V2 supports:
 
-## 2) Output mode policy
+- one x64 `loadwhat.exe`
+- x64 target processes
+- x86 target processes under WOW64
+- x64 and x86 roots for `imports`
+- the v1 fixed DLL search model unless explicitly extended by a later spec
 
-### Summary mode
+V2 does not support:
 
-Summary mode emits exactly one token line:
+- ARM/ARM64 target diagnosis
+- attach-to-process workflows
+- JSON output
+- custom search modes
+- COM commands
 
-- `com clsid` / `com progid`: `COM_LOOKUP`
-- `com server`: `COM_SERVER`
-- `com audit`: `COM_AUDIT`
+## 2) PE architecture model
 
-### Trace mode
+PE images are classified by COFF `Machine` and optional-header magic:
 
-Trace mode may emit:
+- `x64`: `IMAGE_FILE_MACHINE_AMD64` (`0x8664`) with PE32+ optional header (`0x020B`)
+- `x86`: `IMAGE_FILE_MACHINE_I386` (`0x014C`) with PE32 optional header (`0x010B`)
+- `other`: any other machine, unsupported machine, or mismatched machine/magic pair
 
-- `COM_LOOKUP`
-- `COM_SERVER`
-- `COM_REGISTRATION`
-- `COM_PROGID`
-- `COM_MANIFEST`
-- `COM_AUDIT`
-- `COM_DEPENDENCY_STATUS`
+Unsupported root images exit `22`.
+
+Malformed or unreadable PE roots exit `21` unless a command-specific diagnosis is already defined.
+
+## 3) Static diagnosis
+
+`imports` and `run` Phase B use the root image machine type as the compatibility target.
+
+Rules:
+
+1. Parse direct imports for the root image.
+2. Walk transitive imports with the same deterministic BFS rules from v1.
+3. Resolve DLL basenames with the fixed v1 search order.
+4. Treat a found dependency as compatible only when its architecture matches the root architecture.
+5. Treat a found dependency with incompatible architecture as `STATIC_BAD_IMAGE`.
+6. Treat malformed found dependency files as `STATIC_BAD_IMAGE`.
+7. Preserve first-issue selection by lowest depth, then `via` lexicographic, then DLL name lexicographic.
+
+No new public static token family is introduced. `STATIC_BAD_IMAGE` remains the public result for wrong-architecture dependencies.
+
+## 4) `run` behavior
+
+`run` keeps the v1 phase order:
+
+1. runtime observation through Win32 debug APIs
+2. direct and recursive static import diagnosis
+3. loader-snaps dynamic inference when enabled
+
+Runtime observation continues to use:
+
+- `CreateProcessW(..., DEBUG_ONLY_THIS_PROCESS, ...)`
+- `WaitForDebugEvent`
+- `ContinueDebugEvent`
+
+For x86 WOW64 targets, `LOAD_DLL_DEBUG_EVENT`, `OUTPUT_DEBUG_STRING_EVENT`, exit, timeout, and exception handling remain required.
+
+Summary mode still emits exactly one line when a public diagnosis or success-like completion is reached:
+
+- `STATIC_MISSING`
+- `STATIC_BAD_IMAGE`
+- `DYNAMIC_MISSING`
+- `SUCCESS status=0`
+
+## 5) Loader-snaps
+
+Loader-snaps remains enabled by default for `run`.
+
+For x64 targets:
+
+- keep the existing v1 PEB `NtGlobalFlag` enable path
+- use x64 `NtGlobalFlag` offset `0xBC` for Windows 10/11 family
+
+For x86 WOW64 targets:
+
+- detect WOW64 target process
+- locate PEB32 using `NtQueryInformationProcess(ProcessWow64Information)`
+- set `PEB32->NtGlobalFlag |= FLG_SHOW_LDR_SNAPS`
+- use PEB32 `NtGlobalFlag` offset `0x68` for Windows 10/11 family
+
+If PEB enable fails for either architecture, use the existing IFEO `GlobalFlag` fallback and best-effort restore behavior.
+
+Trace/verbose `NOTE` output may distinguish PEB64 and PEB32 setup details, but must not introduce a new public token family.
+
+## 6) Dynamic inference
+
+Dynamic `LoadLibrary*` inference remains based on loader-snaps `OUTPUT_DEBUG_STRING_EVENT` text.
+
+Candidate selection keeps the v1 rules:
+
+- discard candidates later loaded successfully
+- correlate unnamed failure lines by thread-local context
+- prefer higher-confidence terminal failures
+- prefer app-local/target-initiated failures over later framework or OS noise
+- choose deterministically when tied
+
+For x86 targets, reconstructed `SEARCH_ORDER` and `SEARCH_PATH` lines use the same fixed search model unless a later v2 revision defines architecture-specific differences.
+
+## 7) Output contract
+
+V2 preserves v1 token families:
+
+- `STATIC_MISSING`
+- `STATIC_BAD_IMAGE`
+- `DYNAMIC_MISSING`
+- `SUCCESS`
+- `RUN_START`
+- `RUNTIME_LOADED`
+- `DEBUG_STRING`
+- `RUN_END`
+- `FIRST_BREAK`
+- `STATIC_START`
+- `STATIC_IMPORT`
+- `STATIC_FOUND`
+- `STATIC_END`
 - `SEARCH_ORDER`
 - `SEARCH_PATH`
+- `SUMMARY`
 - `NOTE`
 
-`SEARCH_ORDER` and `SEARCH_PATH` are only emitted when a COM server dependency walk encounters a missing or bad-image DLL and the fixed DLL search model from v1 can be reconstructed for that server.
+V2 may add optional `machine="x64|x86|other"` fields only where the implementation needs trace or verbose diagnostics. Summary mode should not add machine fields unless a later draft explicitly requires them.
 
-### Verbose mode
+## 8) Exit codes
 
-COM commands do not emit runtime timeline tokens. For COM commands, `-v` / `--verbose` is equivalent to `--trace`.
-
-## 3) Scope
-
-### Supported V2 COM model
-
-V2 covers:
-
-- registry-backed `InprocServer32`
-- registry-backed `LocalServer32`
-- HKCU/HKLM merged lookup within a selected registry view
-- 32-bit and 64-bit registry views on x64 Windows
-- `ProgID` and `CurVer` resolution
-- `TreatAs` redirection
-- target-scoped registration-free COM manifest declarations in `com audit`
-- PE validation and dependency diagnosis of resolved server binaries
-
-### Not in planned V2 scope
-
-V2 does not define:
-
-- `run --com`
-- `imports --com`
-- ETW-backed runtime COM tracing
-- `AppID`-driven `LocalService`
-- `DllSurrogate`
-- `RemoteServerName` or remote COM / DCOM
-- COM launch or activation permissions
-- cross-user HKCU inspection
-- full SxS assembly resolution or publisher policy
-
-When a likely out-of-scope feature is encountered, emit:
-
-```text
-NOTE topic="com" detail="out-of-scope" feature="..."
-```
-
-## 4) Resolution model
-
-### Registry merge rules
-
-Within a selected registry view:
-
-1. Query `HKCU\Software\Classes` first.
-2. Fall back to `HKLM\Software\Classes`.
-3. Treat `HKCU` as overriding `HKLM` for the same key path.
-4. Do not rely on direct `HKCR` reads for public behavior.
-
-### ProgID resolution
-
-`com progid` resolves as follows:
-
-1. Resolve the input ProgID in the selected view using the merge rules above.
-2. If the ProgID has a `CurVer`, follow it.
-3. Continue until a ProgID without `CurVer` is reached.
-4. Detect cycles deterministically.
-5. Resolve the terminal ProgID's `CLSID` value.
-
-Failure behavior:
-
-- missing ProgID or missing CLSID after a ProgID chain: `COM_LOOKUP status="PROGID_BROKEN"`
-- cyclic `CurVer` chain: `COM_LOOKUP status="PROGID_BROKEN"`
-
-### CLSID resolution
-
-`com clsid` resolves as follows:
-
-1. Locate the CLSID in the selected view using the merge rules above.
-2. If the CLSID has a `TreatAs`, follow it.
-3. Continue until a CLSID without `TreatAs` is reached.
-4. Detect cycles deterministically.
-5. Inspect supported server subkeys: `InprocServer32`, then `LocalServer32`.
-
-Failure behavior:
-
-- missing CLSID key: `COM_LOOKUP status="NOT_REGISTERED"`
-- cyclic `TreatAs` chain: `COM_LOOKUP status="TREATAS_BROKEN"`
-- CLSID present but no supported server subkey: `COM_LOOKUP status="BROKEN_REGISTRATION"`
-
-### Target-scoped audit
-
-`com audit` resolves as follows:
-
-1. Parse the target PE to determine `target_machine`.
-2. Choose the registry view from `target_machine`:
-   - x64 target -> 64-bit view
-   - x86 target -> 32-bit view
-3. Parse the target manifest for registration-free COM declarations.
-4. If the target manifest declares the queried class, that declaration is the primary source for the audit result.
-5. Otherwise, resolve the class through registry-backed `com clsid` / `com progid` logic in the target view.
-6. Validate the resolved server and, if it is a DLL or EXE path, run dependency diagnosis on that server.
-
-Manifest support in V2 is only target-scoped. `com clsid`, `com progid`, and `com server` do not consult manifests.
-
-## 5) `com server` reverse lookup
-
-`com server` validates a server binary and performs reverse lookup over supported registrations.
-
-Behavior:
-
-1. Normalize the input path to an absolute path.
-2. Validate the file and determine its machine type.
-3. Scan the selected registry views for `InprocServer32` and `LocalServer32` entries.
-4. For each candidate:
-   - expand environment variables for expandable registry values
-   - if `LocalServer32`, extract the executable path from the command line
-   - normalize the candidate path
-   - compare case-insensitively against the normalized input path
-5. Emit matching registrations in deterministic order.
-
-Deterministic output order for reverse lookup:
-
-1. view order: `64`, then `32`
-2. hive order: `HKCU`, then `HKLM`
-3. CLSID lexicographic
-4. ProgID lexicographic
-
-## 6) Server validation
-
-When a supported server path is resolved, V2 validates it in this order:
-
-1. file exists
-2. PE image is readable and structurally valid
-3. if `server_kind="InprocServer32"`, machine type is compatible with the relevant caller:
-   - `com clsid` / `com progid`: the current `loadwhat` build (`x64`)
-   - `com audit`: the target image machine type
-4. if `server_kind="LocalServer32"`, report machine type but do not classify x86/x64 differences as `BITNESS_MISMATCH` in V2
-5. transitive DLL dependency diagnosis using the existing deterministic import walk
-
-`LocalServer32` command lines are validated by executable path only. Command-line arguments are preserved in trace output when available but are not interpreted semantically in V2.
-
-## 7) Token contract
-
-### `COM_LOOKUP`
-
-Purpose: resolution result for `com clsid` or `com progid`.
-
-Required fields:
-
-- `query_kind="clsid|progid"`
-- `query="..."`
-- `status="REGISTERED|NOT_REGISTERED|PROGID_BROKEN|TREATAS_BROKEN|BROKEN_REGISTRATION|ACCESS_DENIED"`
-
-Optional fields:
-
-- `clsid="{...}"`
-- `hive="HKCU|HKLM"`
-- `view="64|32"`
-- `server_kind="InprocServer32|LocalServer32"`
-- `server_status="OK|SERVER_MISSING|SERVER_BAD_IMAGE|SERVER_DEPS_MISSING|BITNESS_MISMATCH|SKIPPED"`
-
-`status` is a lookup result. `server_status` is a separate optional server-health result.
-`BITNESS_MISMATCH` applies only to `InprocServer32`.
-
-### `COM_SERVER`
-
-Purpose: validation result for `com server`, or supporting server detail in trace output.
-
-Required fields:
-
-- `path="..."`
-- `status="OK|SERVER_MISSING|SERVER_BAD_IMAGE|SERVER_DEPS_MISSING|BITNESS_MISMATCH|ACCESS_DENIED"`
-
-Optional fields:
-
-- `machine="x64|x86|unknown"`
-- `views="64|32|64,32"`
-- `registrations=<n>`
-- `server_kind="InprocServer32|LocalServer32"`
-- `threading_model="..."`
-
-`BITNESS_MISMATCH` applies only to `InprocServer32`.
-
-### `COM_REGISTRATION`
-
-Purpose: reverse-lookup registration pointing to a server path.
-
-Required fields:
-
-- `clsid="{...}"`
-- `hive="HKCU|HKLM"`
-- `view="64|32"`
-- `server_kind="InprocServer32|LocalServer32"`
-- `path="..."`
-
-Optional fields:
-
-- `threading_model="..."`
-
-### `COM_PROGID`
-
-Purpose: ProgID associated with a CLSID.
-
-Required fields:
-
-- `clsid="{...}"`
-- `progid="..."`
-
-Optional fields:
-
-- `curver="..."`
-
-### `COM_MANIFEST`
-
-Purpose: target-scoped registration-free COM declaration used by `com audit`.
-
-Required fields:
-
-- `source="embedded|sidecar"`
-- `file="..."`
-- `clsid="{...}"`
-- `server="..."`
-
-Optional fields:
-
-- `progid="..."`
-- `threading_model="..."`
-
-### `COM_AUDIT`
-
-Purpose: overall activation-prerequisite result for a target and class.
-
-Required fields:
-
-- `target="..."`
-- `target_machine="x64|x86|unknown"`
-- `query_kind="clsid|progid"`
-- `query="..."`
-- `source="registry|manifest"`
-- `status="OK|NOT_REGISTERED|PROGID_BROKEN|TREATAS_BROKEN|BROKEN_REGISTRATION|SERVER_MISSING|SERVER_BAD_IMAGE|SERVER_DEPS_MISSING|BITNESS_MISMATCH|ACCESS_DENIED"`
-
-Optional fields:
-
-- `clsid="{...}"`
-- `server_kind="InprocServer32|LocalServer32"`
-- `server_path="..."`
-
-### `COM_DEPENDENCY_STATUS`
-
-Purpose: failing dependency discovered while validating a COM server.
-
-Required fields:
-
-- `status="MISSING|BAD_IMAGE"`
-- `dll="..."`
-
-Optional fields:
-
-- `via="..."`
-- `depth=<n>`
-
-## 8) Summary behavior examples
-
-Examples:
-
-```text
-COM_LOOKUP query_kind="clsid" query="{...}" status="NOT_REGISTERED"
-COM_LOOKUP query_kind="progid" query="Vendor.Object" status="REGISTERED" clsid="{...}" hive="HKLM" view="64" server_kind="InprocServer32" server_status="OK"
-COM_SERVER path="C:\Vendor\foo.dll" status="SERVER_DEPS_MISSING" machine="x64" views="64,32" registrations=2
-COM_AUDIT target="app.exe" target_machine="x86" query_kind="clsid" query="{...}" source="registry" status="BITNESS_MISMATCH" clsid="{...}" server_kind="InprocServer32" server_path="C:\Vendor\foo.dll"
-```
-
-## 9) Exit codes
-
-- `0` = command completed and reported no COM issue
-- `10` = command completed and reported a definitive COM issue
+- `0` = no issue detected, including success-like timeout after runtime module-load progress
+- `10` = missing or bad-image issue detected
 - `20` = usage error
-- `21` = command could not determine the answer because required data was inaccessible or unsupported for the requested path
-- `22` = unsupported architecture for the requested operation
+- `21` = cannot launch/debug target, malformed root image, or non-diagnostic failure without public diagnosis
+- `22` = unsupported root architecture
 
-`ACCESS_DENIED` is a public result, but it still exits `21` because the diagnosis is incomplete.
+## 9) Testing requirements
 
-For `COM_AUDIT`, `BITNESS_MISMATCH` applies only when the selected server kind is `InprocServer32`.
+V2 must add fixture-backed integration coverage for:
 
-## 10) Constraints
+- x86 `imports` success
+- x86 `imports` direct and transitive missing
+- x86 `imports` wrong-architecture dependency
+- x86 `run` success
+- x86 `run` static missing
+- x86 `run` static bad image
+- x86 `run` dynamic missing through loader-snaps
+- x86 loader-snaps PEB32 setup and IFEO fallback notes
+- mixed x64-root/x86-dependency and x86-root/x64-dependency chains
 
-- Windows-only
-- single executable
-- deterministic output ordering
-- no fabricated CLSIDs, paths, server kinds, or manifest declarations
-- summary mode remains one line per COM command
-- v1 `run` and `imports` behavior remains unchanged in V2
+The primary validation workflow remains:
+
+```text
+cargo xtask test
+```

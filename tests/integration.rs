@@ -3,6 +3,9 @@
 mod harness;
 
 #[cfg(all(windows, feature = "harness-tests"))]
+#[path = "integration/architecture_cleanup.rs"]
+mod architecture_cleanup;
+#[cfg(all(windows, feature = "harness-tests"))]
 #[path = "integration/cli_validation_edge_cases.rs"]
 mod cli_validation_edge_cases;
 #[cfg(all(windows, feature = "harness-tests"))]

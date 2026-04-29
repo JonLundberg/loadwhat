@@ -23,7 +23,7 @@ jobs:
         run: cargo build --verbose
 
       - name: Test
-        run: cargo test --verbose
+        run: cargo xtask test
 
       - name: Release build
         run: cargo build --release --verbose

@@ -2,7 +2,7 @@
 
 This document describes the recommended testing strategy for planned COM support.
 
-It is implementation guidance, not part of the public CLI contract. The draft behavior contract lives in [docs/loadwhat_spec_v2.md](./loadwhat_spec_v2.md). The design rationale lives in [docs/com_feature_analysis.md](./com_feature_analysis.md).
+It is implementation guidance, not part of the public CLI contract. The COM planning contract lives in [docs/COM_Plan.md](./COM_Plan.md). The design rationale lives in [docs/com_feature_analysis.md](./com_feature_analysis.md).
 
 ## Goals
 
@@ -247,7 +247,7 @@ cargo test
 
 This tier covers most COM logic without touching the host registry. It should be the default place for new COM tests.
 
-Gated by: `#[cfg(test)]` — always runs.
+Gated by: `#[cfg(test)]` â€” always runs.
 
 #### Complete test case catalog
 
@@ -495,7 +495,7 @@ cargo xtask test
 
 This tier validates the parts that need real PE files on disk but do not require real registry mutation.
 
-Gated by: `#[cfg(feature = "harness-tests")]` — same as existing v1 integration tests.
+Gated by: `#[cfg(feature = "harness-tests")]` â€” same as existing v1 integration tests.
 
 #### Scope
 
@@ -556,7 +556,7 @@ pub fn build_dll_test_pe(imports: &[&str]) -> Vec<u8> {
 
 #### Manifest resource embedding
 
-Add an `RT_MANIFEST` resource to a PE for registration-free COM testing. This is the most complex extension — it requires adding a resource section with a resource directory and a single manifest entry. A minimal implementation:
+Add an `RT_MANIFEST` resource to a PE for registration-free COM testing. This is the most complex extension â€” it requires adding a resource section with a resource directory and a single manifest entry. A minimal implementation:
 
 ```rust
 pub fn build_pe_with_manifest(imports: &[&str], manifest_xml: &str) -> Vec<u8> {
@@ -573,7 +573,7 @@ pub fn build_pe_with_manifest(imports: &[&str], manifest_xml: &str) -> Vec<u8> {
 }
 ```
 
-An alternative to programmatic manifest embedding is building fixture EXEs via MSBuild with a manifest file in the project — this is simpler and more maintainable for the initial implementation.
+An alternative to programmatic manifest embedding is building fixture EXEs via MSBuild with a manifest file in the project â€” this is simpler and more maintainable for the initial implementation.
 
 ### Tier 3: container-based system tests
 
@@ -824,19 +824,19 @@ When adding a test for new COM behavior:
 ```
 Does the test need real Windows registry behavior?
 (HKCR merge, 32/64 view flags, ACL enforcement, real error codes)
-  │
-  ├─ YES ──> Tier 3 (container)
-  │          Also write a Tier 1 mock test for the same logic path.
-  │
-  └─ NO
-      │
+  â”‚
+  â”œâ”€ YES â”€â”€> Tier 3 (container)
+  â”‚          Also write a Tier 1 mock test for the same logic path.
+  â”‚
+  â””â”€ NO
+      â”‚
       Does the test need real PE files on disk?
       (actual DLL loading, loader-snaps interaction, debug APIs)
-        │
-        ├─ YES ──> Tier 2 (fixture-backed)
-        │          Also write a Tier 1 mock test for the parsing/logic.
-        │
-        └─ NO ──> Tier 1 (mock-based)
+        â”‚
+        â”œâ”€ YES â”€â”€> Tier 2 (fixture-backed)
+        â”‚          Also write a Tier 1 mock test for the parsing/logic.
+        â”‚
+        â””â”€ NO â”€â”€> Tier 1 (mock-based)
                    This is the default.
 ```
 
@@ -845,22 +845,22 @@ The goal is for every Tier 2 or Tier 3 test to have a corresponding Tier 1 test 
 ## CI pipeline
 
 ```
-┌────────────────────────────────┐
-│  cargo test                    │  Tier 1: mock tests
-│  (always, every PR)            │  ~seconds
-└──────────────┬─────────────────┘
-               │ pass
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚  cargo test                    â”‚  Tier 1: mock tests
+â”‚  (always, every PR)            â”‚  ~seconds
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+               â”‚ pass
                v
-┌────────────────────────────────┐
-│  cargo xtask test              │  Tier 2: fixture-backed tests
-│  (always, every PR)            │  ~minutes
-└──────────────┬─────────────────┘
-               │ pass
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚  cargo xtask test              â”‚  Tier 2: fixture-backed tests
+â”‚  (always, every PR)            â”‚  ~minutes
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+               â”‚ pass
                v
-┌────────────────────────────────┐
-│  cargo xtask test-container    │  Tier 3: container tests
-│  (nightly / pre-release only)  │  ~5-10 minutes
-└────────────────────────────────┘
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚  cargo xtask test-container    â”‚  Tier 3: container tests
+â”‚  (nightly / pre-release only)  â”‚  ~5-10 minutes
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
 ```
 
 - **Every PR:** Tier 1 + Tier 2. Fast, no special infrastructure.

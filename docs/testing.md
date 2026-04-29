@@ -10,6 +10,8 @@ Windows workflow:
 
 Plain `cargo test` and `cargo test --tests` run the default test set without the harness-backed integration suite. The fixture-backed integration suite is gated behind the `harness-tests` feature and is driven by `cargo xtask test`.
 
+CI must run `cargo xtask test` so fixture-backed token-contract and architecture-hardening tests are enforced on pull requests.
+
 High-level behavior:
 
 1. deletes `target/loadwhat-tests/` from previous runs

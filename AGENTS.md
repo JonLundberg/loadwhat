@@ -38,7 +38,8 @@ Do not implement roadmap items unless explicitly requested.
   - output modes
   - deterministic token behavior
 - COM is no longer planned as v2. Preserve COM planning as future v3-oriented work.
-- If present, move the existing COM draft from `docs/loadwhat_spec_v2.md` to `docs/COM_Plan.md` before creating the new x86/WOW64 v2 spec.
+- COM planning lives in `docs/COM_Plan.md`.
+- The x86/WOW64 v2 draft spec lives in `docs/loadwhat_spec_v2.md`.
 
 Allowed pre-v2 hardening work:
 

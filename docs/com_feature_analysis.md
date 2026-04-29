@@ -2,7 +2,7 @@
 
 This document is the design rationale for planned COM support in `loadwhat`.
 
-It is intentionally not the public contract. The draft behavior contract lives in [docs/loadwhat_spec_v2.md](./loadwhat_spec_v2.md). The COM-specific testing approach lives in [docs/com_testing_strategy.md](./com_testing_strategy.md).
+It is intentionally not the public contract. The COM planning contract lives in [docs/COM_Plan.md](./COM_Plan.md). The COM-specific testing approach lives in [docs/com_testing_strategy.md](./com_testing_strategy.md).
 
 Current implemented behavior remains defined by [docs/loadwhat_spec_v1.md](./loadwhat_spec_v1.md).
 
@@ -164,13 +164,13 @@ These are important areas, but they should not be in the initial V2 contract:
 - cross-user HKCU inspection
 - full SxS assembly resolution and publisher-policy chains
 
-Some of these may become V3 or post-V2 work, but they should not block a useful first COM release.
+Some of these may become later COM work, but they should not block a useful first COM release.
 
 ## Relationship between the COM docs
 
 The COM planning docs now have distinct roles:
 
-- [docs/loadwhat_spec_v2.md](./loadwhat_spec_v2.md): draft public behavior contract for planned V2 COM commands
+- [docs/COM_Plan.md](./COM_Plan.md): planning contract for future COM commands
 - [docs/com_feature_analysis.md](./com_feature_analysis.md): design rationale and scoping decisions
 - [docs/com_testing_strategy.md](./com_testing_strategy.md): implementation-facing testing and CI strategy
 

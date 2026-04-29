@@ -87,6 +87,9 @@ fn run_command(opts: RunOptions) -> i32 {
             return 20;
         }
     };
+    if let Err(err) = ensure_v1_x64_image(&exe_path) {
+        return handle_v1_image_error(&err, trace_mode);
+    }
     let cwd = opts
         .cwd
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
@@ -141,17 +144,7 @@ fn run_command(opts: RunOptions) -> i32 {
             }
             Err(RunError::UnsupportedWow64Target) => {
                 if trace_mode {
-                    emit(
-                        TOKEN_NOTE,
-                        &[
-                            field("topic", quote("loader-snaps")),
-                            field("detail", quote("wow64-target-unsupported")),
-                            field(
-                                "message",
-                                quote("WOW64 target support is roadmap-only in v1"),
-                            ),
-                        ],
-                    );
+                    emit_wow64_unsupported_note();
                 }
                 return 22;
             }
@@ -197,17 +190,7 @@ fn run_command(opts: RunOptions) -> i32 {
         }
         Err(RunError::UnsupportedWow64Target) => {
             if trace_mode {
-                emit(
-                    TOKEN_NOTE,
-                    &[
-                        field("topic", quote("loader-snaps")),
-                        field("detail", quote("wow64-target-unsupported")),
-                        field(
-                            "message",
-                            quote("WOW64 target support is roadmap-only in v1"),
-                        ),
-                    ],
-                );
+                emit_wow64_unsupported_note();
             }
             return 22;
         }
@@ -523,6 +506,9 @@ fn imports_command(opts: ImportsOptions) -> i32 {
             return 20;
         }
     };
+    if let Err(err) = ensure_v1_x64_image(&module_path) {
+        return handle_v1_image_error(&err, false);
+    }
     let cwd = opts
         .cwd
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
@@ -647,6 +633,21 @@ fn emit_loader_snaps_peb_note(info: PebEnableInfo) {
             field(
                 "ntglobalflag_offset",
                 format!("0x{:X}", info.ntglobalflag_offset),
+            ),
+        ],
+    );
+}
+
+#[cfg(windows)]
+fn emit_wow64_unsupported_note() {
+    emit(
+        TOKEN_NOTE,
+        &[
+            field("topic", quote("loader-snaps")),
+            field("detail", quote("wow64-target-unsupported")),
+            field(
+                "message",
+                quote("WOW64 target support is roadmap-only in v1"),
             ),
         ],
     );
@@ -988,6 +989,52 @@ fn run_result_code(outcome: &RunOutcome, diagnosis_count: usize) -> i32 {
         RunEndKind::ExitProcess if outcome.exit_code == Some(0) => 0,
         RunEndKind::Timeout if !outcome.loaded_modules.is_empty() => 0,
         RunEndKind::ExitProcess | RunEndKind::Exception | RunEndKind::Timeout => 21,
+    }
+}
+
+#[cfg(windows)]
+enum V1ImageError {
+    Invalid(String),
+    Unsupported(pe::ImageArchitecture),
+}
+
+#[cfg(windows)]
+fn ensure_v1_x64_image(path: &Path) -> Result<(), V1ImageError> {
+    match pe::image_architecture(path) {
+        Ok(pe::ImageArchitecture::X64) => Ok(()),
+        Ok(arch) => Err(V1ImageError::Unsupported(arch)),
+        Err(err) => Err(V1ImageError::Invalid(err)),
+    }
+}
+
+#[cfg(windows)]
+fn handle_v1_image_error(err: &V1ImageError, trace_mode: bool) -> i32 {
+    match err {
+        V1ImageError::Invalid(message) => {
+            eprintln!("{message}");
+            21
+        }
+        V1ImageError::Unsupported(arch) => {
+            if trace_mode && matches!(arch, pe::ImageArchitecture::X86) {
+                emit_wow64_unsupported_note();
+            }
+            eprintln!(
+                "unsupported architecture for v1 x64-only behavior: {}",
+                describe_image_architecture(*arch)
+            );
+            22
+        }
+    }
+}
+
+#[cfg(windows)]
+fn describe_image_architecture(arch: pe::ImageArchitecture) -> String {
+    match arch {
+        pe::ImageArchitecture::X64 => "x64".to_string(),
+        pe::ImageArchitecture::X86 => "x86/WOW64".to_string(),
+        pe::ImageArchitecture::Other { machine, magic } => {
+            format!("machine=0x{machine:04X} magic=0x{magic:04X}")
+        }
     }
 }
 

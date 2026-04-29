@@ -103,10 +103,9 @@ fn imports_transitive_non_pe_file_reports_bad_image() {
     harness::pe_builder::write_import_test_pe(&good, &["corrupt.dll"])
         .expect("failed to write good.dll");
 
-    // Write junk bytes — is_probably_pe_file returns false, so search classifies
-    // it as BadImage. A structurally valid PE with a corrupted import RVA would
-    // pass is_probably_pe_file and cause direct_imports to Err, aborting the
-    // entire diagnose_static_imports call, so we use plain non-PE bytes instead.
+    // Write junk bytes so search classifies the resolved candidate as BadImage.
+    // A structurally valid PE with a corrupted import RVA would be enqueued and
+    // direct_imports would abort the diagnosis, so plain non-PE bytes are used.
     fs::write(dir.join("corrupt.dll"), b"definitely not a PE file")
         .expect("failed to write corrupt.dll");
 

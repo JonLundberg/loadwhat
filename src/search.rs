@@ -188,10 +188,11 @@ fn classify_candidate(path: &Path) -> ResolutionKind {
     if !path.exists() {
         return ResolutionKind::Missing;
     }
-    if pe::is_probably_pe_file(path) {
-        ResolutionKind::Found
-    } else {
-        ResolutionKind::BadImage
+    match pe::image_architecture(path) {
+        Ok(pe::ImageArchitecture::X64) => ResolutionKind::Found,
+        Ok(pe::ImageArchitecture::X86 | pe::ImageArchitecture::Other { .. }) | Err(_) => {
+            ResolutionKind::BadImage
+        }
     }
 }
 
@@ -235,18 +236,22 @@ mod tests {
     const SIZE_OF_OPTIONAL_HEADER_OFFSET: usize = PE_OFFSET + 20;
 
     fn build_valid_pe() -> Vec<u8> {
+        build_pe(0x8664, 0x020B)
+    }
+
+    fn build_pe(machine: u16, magic: u16) -> Vec<u8> {
         let mut bytes = vec![0u8; 0x240];
         bytes[0..2].copy_from_slice(b"MZ");
         write_u32(&mut bytes, 0x3C, PE_OFFSET as u32);
         bytes[PE_OFFSET..PE_OFFSET + 4].copy_from_slice(b"PE\0\0");
-        write_u16(&mut bytes, PE_OFFSET + 4, 0x8664);
+        write_u16(&mut bytes, PE_OFFSET + 4, machine);
         write_u16(&mut bytes, NUMBER_OF_SECTIONS_OFFSET, 1);
         write_u16(
             &mut bytes,
             SIZE_OF_OPTIONAL_HEADER_OFFSET,
             OPTIONAL_HEADER_SIZE,
         );
-        write_u16(&mut bytes, OPTIONAL_HEADER_OFFSET, 0x020B);
+        write_u16(&mut bytes, OPTIONAL_HEADER_OFFSET, magic);
         write_u32(&mut bytes, DATA_DIR_START + 8, 0);
         bytes[SECTION_TABLE_OFFSET..SECTION_TABLE_OFFSET + 5].copy_from_slice(b".text");
         write_u32(&mut bytes, SECTION_TABLE_OFFSET + 8, 0x40);
@@ -529,6 +534,24 @@ mod tests {
         assert_eq!(resolution.candidates.len(), 1);
         assert_eq!(resolution.candidates[0].path, dll);
         assert_eq!(resolution.candidates[0].result, "MISS");
+
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn x86_pe_candidate_is_bad_image_for_v1_x64_search() {
+        let temp = unique_temp_dir("x86-bad-image");
+        let app_dir = temp.join("app");
+        fs::create_dir_all(&app_dir).expect("failed to create app dir");
+        fs::write(app_dir.join("foo.dll"), build_pe(0x014C, 0x010B))
+            .expect("failed to create x86 PE");
+
+        let context = temp_context(app_dir.clone(), temp.join("cwd"), Vec::new(), true);
+        let resolution = resolve_dll("foo.dll", &context);
+
+        assert!(matches!(resolution.kind, ResolutionKind::BadImage));
+        assert_eq!(resolution.chosen, Some(app_dir.join("foo.dll")));
+        assert_eq!(resolution.candidates[0].result, "BAD_IMAGE");
 
         let _ = fs::remove_dir_all(temp);
     }
