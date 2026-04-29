@@ -4,7 +4,9 @@ This file defines mandatory behavioral rules for Codex when working in this repo
 
 ## Primary objective
 
-Build **loadwhat**, a single-executable Windows x64 Rust CLI that diagnoses process-startup DLL loading failures using Win32 Debug APIs directly (no DbgEng).
+Current v1 objective: build **loadwhat**, a single-executable Windows x64 Rust CLI that diagnoses process-startup DLL loading failures using Win32 Debug APIs directly (no DbgEng).
+
+Future v2 objective: add x86/WOW64 target support with feature parity for the existing DLL-loading mission. Do not implement v2 behavior until the v2 spec exists and authorizes it.
 
 ## Authority hierarchy (strict order)
 
@@ -23,9 +25,41 @@ Never override or reinterpret the authoritative v1 spec.
 Planned and out-of-scope features live in `docs/roadmap.md`.
 Do not implement roadmap items unless explicitly requested.
 
+## Version planning
+
+- v1 is the current active contract and remains Windows-only, x64-only.
+- `docs/loadwhat_spec_v1.md` remains the absolute authority for current behavior.
+- Agents must not implement x86 target support under v1 unless the v1 spec is updated first.
+- v2 is planned to add x86/WOW64 support with parity for:
+  - `run`
+  - `imports`
+  - recursive static diagnosis
+  - loader-snaps dynamic inference
+  - output modes
+  - deterministic token behavior
+- COM is no longer planned as v2. Preserve COM planning as future v3-oriented work.
+- If present, move the existing COM draft from `docs/loadwhat_spec_v2.md` to `docs/COM_Plan.md` before creating the new x86/WOW64 v2 spec.
+
+Allowed pre-v2 hardening work:
+
+- update CI to run `cargo xtask test`
+- add PE architecture detection as internal plumbing
+- classify wrong-architecture DLLs in x64 dependency chains as bad image
+- reject x86 targets consistently until v2 support is specified and implemented
+
+V2-only work:
+
+- allowing x86 targets
+- WOW64 runtime/debug support
+- PEB32 loader-snaps support
+- x86 fixture expansion and full parity tests
+
 ## Non-negotiable constraints
 
-- Windows-only, x64-only.
+- Windows-only.
+- Current v1 is x64-only for supported targets.
+- Until v2 is specified and implemented, x86/WOW64 targets must be rejected consistently per v1 behavior.
+- Internal PE architecture detection is allowed in v1 when used to enforce x64-only behavior or diagnose wrong-architecture dependencies.
 - One executable; no external runtime dependencies.
 - Use Win32 Debug APIs directly:
   - `CreateProcessW` with `DEBUG_ONLY_THIS_PROCESS`
@@ -150,6 +184,8 @@ When changing behavior:
 1. update code
 2. update tests
 3. update spec/examples if the public contract changed
+
+Public behavior changes must update the active spec before or with the implementation. Do not rely on roadmap or planning docs to redefine current behavior.
 
 Do not silently change code behavior while leaving the docs or test contract behind.
 
