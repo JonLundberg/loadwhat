@@ -1,6 +1,6 @@
 [package]
 name = "loadwhat"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 description = "Lightweight Windows DLL loading diagnostics for no-GUI environments."
 license = "MIT"
@@ -9,6 +9,9 @@ keywords = ["windows", "dll", "debugger", "cli", "diagnostics"]
 categories = ["command-line-utilities", "development-tools::debugging"]
 
 [dependencies]
+
+[build-dependencies]
+winres = "0.1"
 
 [features]
 harness-tests = []
