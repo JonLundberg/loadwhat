@@ -130,7 +130,7 @@ fn format_require_message(error: &HarnessSetupError) -> String {
     message.push_str("- LOADWHAT_TEST_ROOT\n");
     message.push_str("- LOADWHAT_FIXTURE_BIN_ROOT\n");
     message.push_str("- LOADWHAT_TEST_MODE=1\n");
-    message.push_str("\n");
+    message.push('\n');
 
     match error {
         HarnessSetupError::MissingEnvVar(name) | HarnessSetupError::EmptyEnvVar(name) => {

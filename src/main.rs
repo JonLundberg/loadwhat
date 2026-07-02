@@ -7,6 +7,8 @@ fn main() {
 #[cfg(windows)]
 mod cli;
 #[cfg(windows)]
+mod com;
+#[cfg(windows)]
 mod debug_run;
 #[cfg(windows)]
 mod emit;
@@ -32,19 +34,34 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 #[cfg(windows)]
-use cli::{Command, ImportsOptions, RunOptions};
+use cli::{ComOptions, ComSubcommand, ComViewArg, Command, ImportsOptions, RunOptions};
+#[cfg(windows)]
+use com::fs::{ComFileSystem, DepCandidate, DepFailure, DepStatus, DepWalkReport};
+#[cfg(windows)]
+use com::registry::WindowsRegistry;
+#[cfg(windows)]
+use com::resolver::{
+    ComAuditResult, ComError, ComLookupResult, ComRegistration, ComResolver, QueryKind,
+    ServerValidation,
+};
+#[cfg(windows)]
+use com::{LookupStatus, RegView, ServerKind, ServerStatus};
 #[cfg(windows)]
 use debug_run::{LoadedModule, RunEndKind, RunError, RunOutcome, RuntimeEvent};
 #[cfg(windows)]
 use emit::{
-    emit, field, hex_u32, hex_usize, quote, summary_fields, SummaryCounts, TOKEN_DEBUG_STRING,
-    TOKEN_DYNAMIC_MISSING, TOKEN_FIRST_BREAK, TOKEN_NOTE, TOKEN_RUNTIME_LOADED, TOKEN_RUN_END,
-    TOKEN_RUN_START, TOKEN_SEARCH_ORDER, TOKEN_SEARCH_PATH, TOKEN_STATIC_BAD_IMAGE,
-    TOKEN_STATIC_END, TOKEN_STATIC_FOUND, TOKEN_STATIC_IMPORT, TOKEN_STATIC_MISSING,
-    TOKEN_STATIC_START, TOKEN_SUCCESS, TOKEN_SUMMARY,
+    emit, field, hex_u32, hex_usize, quote, summary_fields, SummaryCounts, TOKEN_COM_AUDIT,
+    TOKEN_COM_DEPENDENCY_STATUS, TOKEN_COM_LOOKUP, TOKEN_COM_MANIFEST, TOKEN_COM_PROGID,
+    TOKEN_COM_REGISTRATION, TOKEN_COM_SERVER, TOKEN_DEBUG_STRING, TOKEN_DYNAMIC_MISSING,
+    TOKEN_FIRST_BREAK, TOKEN_NOTE, TOKEN_RUNTIME_LOADED, TOKEN_RUN_END, TOKEN_RUN_START,
+    TOKEN_SEARCH_ORDER, TOKEN_SEARCH_PATH, TOKEN_STATIC_BAD_IMAGE, TOKEN_STATIC_END,
+    TOKEN_STATIC_FOUND, TOKEN_STATIC_IMPORT, TOKEN_STATIC_MISSING, TOKEN_STATIC_START,
+    TOKEN_SUCCESS, TOKEN_SUMMARY,
 };
 #[cfg(windows)]
 use loader_snaps::{LoaderSnapsGuard, PebEnableInfo};
+#[cfg(windows)]
+use pe::MachineType;
 #[cfg(windows)]
 use search::{CandidateResult, ResolutionKind, SearchContext};
 
@@ -66,6 +83,7 @@ fn main() {
     let code = match command {
         Command::Run(opts) => run_command(opts),
         Command::Imports(opts) => imports_command(opts),
+        Command::Com(opts) => com_command(opts),
         Command::Help => {
             println!("{}", cli::usage());
             0
@@ -565,6 +583,499 @@ fn imports_command(opts: ImportsOptions) -> i32 {
     }
 }
 
+/// Production COM file-system backend: std::fs checks plus the v1 static
+/// dependency walk in collect-only mode.
+#[cfg(windows)]
+struct RealComFileSystem;
+
+#[cfg(windows)]
+impl ComFileSystem for RealComFileSystem {
+    fn file_exists(&self, path: &str) -> bool {
+        Path::new(path).is_file()
+    }
+
+    fn read_file_header(&self, path: &str, max_bytes: usize) -> Option<Vec<u8>> {
+        use std::io::Read;
+        let file = std::fs::File::open(path).ok()?;
+        let mut buffer = Vec::new();
+        file.take(max_bytes as u64).read_to_end(&mut buffer).ok()?;
+        Some(buffer)
+    }
+
+    fn walk_dependencies(&self, path: &str) -> Result<DepWalkReport, String> {
+        let module_path = Path::new(path);
+        let cwd = module_path
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("."));
+        let runtime_loaded: HashSet<String> = HashSet::new();
+        let runtime_observed: HashMap<String, PathBuf> = HashMap::new();
+        let report = diagnose_static_imports(
+            module_path,
+            &cwd,
+            &runtime_loaded,
+            &runtime_observed,
+            env_path_override(&[]),
+            StaticEmitMode::CollectOnly,
+        )?;
+        Ok(DepWalkReport {
+            failures: report
+                .failures
+                .into_iter()
+                .map(|failure| DepFailure {
+                    dll: failure.dll,
+                    via: failure.via,
+                    depth: failure.depth,
+                    status: match failure.kind {
+                        ResolutionKind::BadImage => DepStatus::BadImage,
+                        _ => DepStatus::Missing,
+                    },
+                    candidates: failure
+                        .candidates
+                        .iter()
+                        .map(|candidate| DepCandidate {
+                            order: candidate.order,
+                            path: display_path(&candidate.path),
+                            result: candidate.result,
+                        })
+                        .collect(),
+                })
+                .collect(),
+            safedll: report.safedll,
+        })
+    }
+
+    fn embedded_manifest(&self, path: &str) -> Option<String> {
+        pe::extract_embedded_manifest(Path::new(path))
+    }
+}
+
+#[cfg(windows)]
+fn com_command(opts: ComOptions) -> i32 {
+    let registry = WindowsRegistry;
+    let fs = RealComFileSystem;
+    let resolver = ComResolver::new(&registry, &fs);
+    match opts.sub {
+        ComSubcommand::Clsid { query, view } => {
+            com_lookup_command(&resolver, QueryKind::Clsid, &query, view, opts.trace)
+        }
+        ComSubcommand::Progid { query, view } => {
+            com_lookup_command(&resolver, QueryKind::Progid, &query, view, opts.trace)
+        }
+        ComSubcommand::Server { path, view } => {
+            com_server_command(&resolver, &path, view, opts.trace)
+        }
+        ComSubcommand::Audit { target, query } => {
+            com_audit_command(&resolver, &target, &query, opts.trace)
+        }
+    }
+}
+
+#[cfg(windows)]
+fn com_reg_view(view: ComViewArg) -> RegView {
+    match view {
+        ComViewArg::V32 => RegView::V32,
+        // `both` is rejected by CLI validation for lookup commands.
+        _ => RegView::V64,
+    }
+}
+
+#[cfg(windows)]
+fn com_error_exit(error: ComError) -> i32 {
+    match error {
+        ComError::Indeterminate(message) => {
+            eprintln!("{message}");
+            21
+        }
+        ComError::UnsupportedArchitecture(message) => {
+            eprintln!("{message}");
+            22
+        }
+    }
+}
+
+#[cfg(windows)]
+fn absolutize_path(path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(path)
+    }
+}
+
+#[cfg(windows)]
+fn com_lookup_command(
+    resolver: &ComResolver,
+    kind: QueryKind,
+    query: &str,
+    view_arg: ComViewArg,
+    trace: bool,
+) -> i32 {
+    let view = com_reg_view(view_arg);
+    let mut result = match kind {
+        QueryKind::Clsid => resolver.resolve_clsid(query, view),
+        QueryKind::Progid => resolver.resolve_progid(query, view),
+    };
+    // The relevant caller architecture for an in-proc bitness check is the
+    // one implied by the selected registry view.
+    let expected = match view {
+        RegView::V64 => MachineType::X64,
+        RegView::V32 => MachineType::X86,
+    };
+    if let Err(error) = resolver.validate_lookup_server(&mut result, Some(expected)) {
+        return com_error_exit(error);
+    }
+
+    if trace {
+        emit_com_lookup_trace(&result);
+    }
+    emit_com_lookup(kind, query, &result);
+    com_lookup_exit_code(&result)
+}
+
+#[cfg(windows)]
+fn emit_com_lookup(kind: QueryKind, query: &str, result: &ComLookupResult) {
+    let mut fields = vec![
+        field("query_kind", quote(kind.as_token())),
+        field("query", quote(query)),
+        field("status", quote(result.status.as_token())),
+    ];
+    if let Some(clsid) = &result.clsid {
+        fields.push(field("clsid", quote(clsid)));
+    }
+    if let Some(hive) = result.hive {
+        fields.push(field("hive", quote(hive.as_token())));
+        fields.push(field("view", quote(result.view.as_token())));
+    }
+    if let Some(server_kind) = result.server_kind {
+        fields.push(field("server_kind", quote(server_kind.as_token())));
+    }
+    if let Some(server) = &result.server {
+        fields.push(field("server_status", quote(server.status.as_token())));
+    }
+    emit(TOKEN_COM_LOOKUP, &fields);
+}
+
+#[cfg(windows)]
+fn emit_com_lookup_trace(result: &ComLookupResult) {
+    if let (Some(clsid), Some(progid)) = (&result.clsid, &result.progid_of_clsid) {
+        let mut fields = vec![field("clsid", quote(clsid)), field("progid", quote(progid))];
+        if result.progid_chain.len() > 1 {
+            if let Some(curver) = result.progid_chain.last() {
+                fields.push(field("curver", quote(curver)));
+            }
+        }
+        emit(TOKEN_COM_PROGID, &fields);
+    }
+
+    if let (Some(path), Some(server)) = (&result.server_path, &result.server) {
+        emit_com_server_detail(
+            path,
+            result.server_kind,
+            result.threading_model.as_deref(),
+            server,
+        );
+        emit_com_dependency_trace(server);
+    }
+
+    if let Some(command) = &result.server_command {
+        emit(
+            TOKEN_NOTE,
+            &[
+                field("topic", quote("com")),
+                field("detail", quote("localserver32-command")),
+                field("command", quote(command)),
+            ],
+        );
+    }
+}
+
+#[cfg(windows)]
+fn emit_com_server_detail(
+    path: &str,
+    server_kind: Option<ServerKind>,
+    threading_model: Option<&str>,
+    server: &ServerValidation,
+) {
+    let mut fields = vec![
+        field("path", quote(path)),
+        field("status", quote(server.status.as_token())),
+    ];
+    if let Some(machine) = server.machine {
+        fields.push(field("machine", quote(machine.as_token())));
+    }
+    if let Some(kind) = server_kind {
+        fields.push(field("server_kind", quote(kind.as_token())));
+    }
+    if let Some(threading_model) = threading_model {
+        fields.push(field("threading_model", quote(threading_model)));
+    }
+    emit(TOKEN_COM_SERVER, &fields);
+}
+
+#[cfg(windows)]
+fn emit_com_dependency_trace(server: &ServerValidation) {
+    if let Some(redirected) = &server.redirected_path {
+        emit(
+            TOKEN_NOTE,
+            &[
+                field("topic", quote("com")),
+                field("detail", quote("wow64-redirected")),
+                field("path", quote(redirected)),
+            ],
+        );
+    }
+
+    for failure in &server.failures {
+        let mut fields = vec![
+            field("status", quote(failure.status.as_token())),
+            field("dll", quote(&failure.dll)),
+        ];
+        if failure.depth > 1 {
+            fields.push(field("via", quote(&failure.via)));
+            fields.push(field("depth", failure.depth.to_string()));
+        }
+        emit(TOKEN_COM_DEPENDENCY_STATUS, &fields);
+    }
+
+    if let Some(first) = server.failures.first() {
+        if !first.candidates.is_empty() {
+            emit(
+                TOKEN_SEARCH_ORDER,
+                &[field("safedll", if server.safedll { "1" } else { "0" })],
+            );
+            for candidate in &first.candidates {
+                emit(
+                    TOKEN_SEARCH_PATH,
+                    &[
+                        field("dll", quote(&first.dll)),
+                        field("order", candidate.order.to_string()),
+                        field("path", quote(&candidate.path)),
+                        field("result", quote(candidate.result)),
+                    ],
+                );
+            }
+        }
+    }
+
+    if server.status == ServerStatus::Skipped {
+        emit(
+            TOKEN_NOTE,
+            &[
+                field("topic", quote("com")),
+                field("detail", quote("out-of-scope")),
+                field("feature", quote("x86-dependency-walk")),
+            ],
+        );
+    }
+}
+
+#[cfg(windows)]
+fn com_lookup_exit_code(result: &ComLookupResult) -> i32 {
+    if result.status == LookupStatus::AccessDenied {
+        return 21;
+    }
+    if let Some(server) = &result.server {
+        if server.status == ServerStatus::AccessDenied {
+            return 21;
+        }
+    }
+    if result.is_issue() {
+        10
+    } else {
+        0
+    }
+}
+
+#[cfg(windows)]
+fn com_server_command(
+    resolver: &ComResolver,
+    path: &Path,
+    view_arg: ComViewArg,
+    trace: bool,
+) -> i32 {
+    let absolute = absolutize_path(path);
+    let path_str = display_path(&absolute);
+    let views: &[RegView] = match view_arg {
+        ComViewArg::V64 => &[RegView::V64],
+        ComViewArg::V32 => &[RegView::V32],
+        ComViewArg::Both => &[RegView::V64, RegView::V32],
+    };
+    let views_token = views
+        .iter()
+        .map(|v| v.as_token())
+        .collect::<Vec<_>>()
+        .join(",");
+
+    // A bare path has no registration kind; validate without a bitness
+    // expectation and report the machine type instead.
+    let validation = match resolver.validate_server_file(&path_str, ServerKind::Local, None) {
+        Ok(validation) => validation,
+        Err(error) => return com_error_exit(error),
+    };
+
+    let (registrations, denied) = match resolver.reverse_lookup(&path_str, views) {
+        Ok(registrations) => (registrations, false),
+        Err(_) => (Vec::new(), true),
+    };
+
+    if trace {
+        for registration in &registrations {
+            emit_com_registration(registration);
+        }
+        emit_com_dependency_trace(&validation);
+    }
+
+    let status_token = if denied {
+        "ACCESS_DENIED"
+    } else {
+        match validation.status {
+            // The x86 walk skip leaves existence/image checks authoritative.
+            ServerStatus::Skipped => "OK",
+            other => other.as_token(),
+        }
+    };
+
+    let mut fields = vec![
+        field("path", quote(&path_str)),
+        field("status", quote(status_token)),
+    ];
+    if let Some(machine) = validation.machine {
+        fields.push(field("machine", quote(machine.as_token())));
+    }
+    fields.push(field("views", quote(&views_token)));
+    fields.push(field("registrations", registrations.len().to_string()));
+    if let Some(kind) = uniform_registration_kind(&registrations) {
+        fields.push(field("server_kind", quote(kind)));
+    }
+    if let Some(threading_model) = uniform_threading_model(&registrations) {
+        fields.push(field("threading_model", quote(&threading_model)));
+    }
+    emit(TOKEN_COM_SERVER, &fields);
+
+    if denied || validation.status == ServerStatus::AccessDenied {
+        21
+    } else if matches!(
+        validation.status,
+        ServerStatus::Missing | ServerStatus::BadImage | ServerStatus::DepsMissing
+    ) {
+        10
+    } else {
+        0
+    }
+}
+
+#[cfg(windows)]
+fn uniform_registration_kind(registrations: &[ComRegistration]) -> Option<&'static str> {
+    let first = registrations.first()?.kind;
+    registrations
+        .iter()
+        .all(|r| r.kind == first)
+        .then(|| first.as_token())
+}
+
+#[cfg(windows)]
+fn uniform_threading_model(registrations: &[ComRegistration]) -> Option<String> {
+    let first = registrations.first()?.threading_model.clone()?;
+    registrations
+        .iter()
+        .all(|r| r.threading_model.as_deref() == Some(first.as_str()))
+        .then_some(first)
+}
+
+#[cfg(windows)]
+fn emit_com_registration(registration: &ComRegistration) {
+    let mut fields = vec![
+        field("clsid", quote(&registration.clsid)),
+        field("hive", quote(registration.hive.as_token())),
+        field("view", quote(registration.view.as_token())),
+        field("server_kind", quote(registration.kind.as_token())),
+        field("path", quote(&registration.path)),
+    ];
+    if let Some(threading_model) = &registration.threading_model {
+        fields.push(field("threading_model", quote(threading_model)));
+    }
+    emit(TOKEN_COM_REGISTRATION, &fields);
+}
+
+#[cfg(windows)]
+fn com_audit_command(resolver: &ComResolver, target: &Path, query: &str, trace: bool) -> i32 {
+    let absolute = absolutize_path(target);
+    let target_str = display_path(&absolute);
+    let query_kind = if query.starts_with('{') {
+        QueryKind::Clsid
+    } else {
+        QueryKind::Progid
+    };
+
+    let audit = match resolver.audit(&target_str, query, query_kind) {
+        Ok(audit) => audit,
+        Err(error) => return com_error_exit(error),
+    };
+
+    if trace {
+        emit_com_audit_trace(&audit);
+    }
+
+    let mut fields = vec![
+        field("target", quote(&target_str)),
+        field("target_machine", quote(audit.target_machine.as_token())),
+        field("query_kind", quote(query_kind.as_token())),
+        field("query", quote(query)),
+        field("source", quote(audit.source.as_token())),
+        field("status", quote(audit.status)),
+    ];
+    if let Some(clsid) = &audit.clsid {
+        fields.push(field("clsid", quote(clsid)));
+    }
+    if let Some(kind) = audit.server_kind {
+        fields.push(field("server_kind", quote(kind.as_token())));
+    }
+    if let Some(server_path) = &audit.server_path {
+        fields.push(field("server_path", quote(server_path)));
+    }
+    emit(TOKEN_COM_AUDIT, &fields);
+
+    if audit.is_access_denied() {
+        21
+    } else if audit.is_issue() {
+        10
+    } else {
+        0
+    }
+}
+
+#[cfg(windows)]
+fn emit_com_audit_trace(audit: &ComAuditResult) {
+    if let Some(hit) = &audit.manifest {
+        let mut fields = vec![
+            field("source", quote(hit.source)),
+            field("file", quote(&hit.file)),
+            field("clsid", quote(&hit.decl.clsid)),
+            field(
+                "server",
+                quote(hit.decl.server_dll.as_deref().unwrap_or("")),
+            ),
+        ];
+        if let Some(progid) = &hit.decl.progid {
+            fields.push(field("progid", quote(progid)));
+        }
+        if let Some(threading_model) = &hit.decl.threading_model {
+            fields.push(field("threading_model", quote(threading_model)));
+        }
+        emit(TOKEN_COM_MANIFEST, &fields);
+    }
+
+    if let Some(lookup) = &audit.lookup {
+        emit_com_lookup_trace(lookup);
+    } else if let (Some(path), Some(server)) = (&audit.server_path, &audit.server) {
+        emit_com_server_detail(path, audit.server_kind, None, server);
+        emit_com_dependency_trace(server);
+    }
+}
+
 #[cfg(windows)]
 fn emit_run_events(exe_path: &Path, cwd: &Path, outcome: &RunOutcome) {
     emit(
@@ -664,10 +1175,20 @@ struct FirstIssue {
 }
 
 #[cfg(windows)]
+struct StaticFailure {
+    dll: String,
+    via: String,
+    depth: u32,
+    kind: ResolutionKind,
+    candidates: Vec<CandidateResult>,
+}
+
+#[cfg(windows)]
 struct StaticReport {
     missing_count: usize,
     bad_image_count: usize,
     first_issue: Option<FirstIssue>,
+    failures: Vec<StaticFailure>,
     safedll: bool,
 }
 
@@ -677,6 +1198,9 @@ enum StaticEmitMode {
     Full,
     FailuresOnly,
     SummaryOnly,
+    /// No token output and no early break; used by COM server validation to
+    /// collect the complete failing-dependency list.
+    CollectOnly,
 }
 
 #[cfg(windows)]
@@ -721,6 +1245,7 @@ fn diagnose_static_imports(
     let mut missing_count = 0usize;
     let mut bad_image_count = 0usize;
     let mut first_issue = None::<FirstIssue>;
+    let mut failures = Vec::new();
     let mut visited = HashSet::new();
     let mut queue = VecDeque::new();
     let mut max_parent_depth_for_failures = None::<u32>;
@@ -825,6 +1350,13 @@ fn diagnose_static_imports(
                 }
                 ResolutionKind::Missing => {
                     missing_count += 1;
+                    failures.push(StaticFailure {
+                        dll: dll.clone(),
+                        via: node.module_name.clone(),
+                        depth: node.depth + 1,
+                        kind: ResolutionKind::Missing,
+                        candidates: resolution.candidates.clone(),
+                    });
                     let issue = FirstIssue {
                         module: root_module_name.clone(),
                         via: node.module_name.clone(),
@@ -858,6 +1390,13 @@ fn diagnose_static_imports(
                 }
                 ResolutionKind::BadImage => {
                     bad_image_count += 1;
+                    failures.push(StaticFailure {
+                        dll: dll.clone(),
+                        via: node.module_name.clone(),
+                        depth: node.depth + 1,
+                        kind: ResolutionKind::BadImage,
+                        candidates: resolution.candidates.clone(),
+                    });
                     let issue = FirstIssue {
                         module: root_module_name.clone(),
                         via: node.module_name.clone(),
@@ -902,6 +1441,7 @@ fn diagnose_static_imports(
         missing_count,
         bad_image_count,
         first_issue,
+        failures,
         safedll: context.safedll,
     })
 }

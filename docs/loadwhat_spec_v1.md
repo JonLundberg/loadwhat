@@ -35,6 +35,20 @@ loadwhat run [OPTIONS] <TARGET> [TARGET_ARGS...]
 loadwhat imports <exe_or_dll> [--cwd <dir>]
 ```
 
+### COM commands
+
+```text
+loadwhat com clsid [OPTIONS] <{CLSID}>
+loadwhat com progid [OPTIONS] <PROGID>
+loadwhat com server [OPTIONS] <PATH>
+loadwhat com audit [OPTIONS] <TARGET> <{CLSID}|PROGID>
+```
+
+The `com` command family is implemented; its behavior contract (resolution
+model, token contract, and exit codes) is defined by
+[docs/loadwhat_spec_v2.md](./loadwhat_spec_v2.md). The `com` commands do not
+change the `run` or `imports` behavior defined in this document.
+
 ### Not in v1
 
 Roadmap-only features are documented in `docs/roadmap.md` and are not part of this spec.

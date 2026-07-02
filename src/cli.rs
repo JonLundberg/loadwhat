@@ -8,7 +8,29 @@ use std::path::PathBuf;
 pub enum Command {
     Run(RunOptions),
     Imports(ImportsOptions),
+    Com(ComOptions),
     Help,
+}
+
+#[derive(Debug)]
+pub struct ComOptions {
+    pub sub: ComSubcommand,
+    pub trace: bool,
+}
+
+#[derive(Debug)]
+pub enum ComSubcommand {
+    Clsid { query: String, view: ComViewArg },
+    Progid { query: String, view: ComViewArg },
+    Server { path: PathBuf, view: ComViewArg },
+    Audit { target: PathBuf, query: String },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ComViewArg {
+    V64,
+    V32,
+    Both,
 }
 
 #[derive(Debug)]
@@ -51,6 +73,7 @@ where
     match sub.as_str() {
         "run" => parse_run(&values[1..]),
         "imports" => parse_imports(&values[1..]),
+        "com" => parse_com(&values[1..]),
         "-h" | "--help" | "help" => Ok(Command::Help),
         other => Err(format!("unknown command: {other}\n\n{}", usage())),
     }
@@ -175,12 +198,181 @@ fn parse_imports(values: &[OsString]) -> Result<Command, String> {
     Ok(Command::Imports(ImportsOptions { module_path, cwd }))
 }
 
+fn parse_com(values: &[OsString]) -> Result<Command, String> {
+    if values.is_empty() {
+        return Err(format!("error: missing com subcommand\n\n{}", com_usage()));
+    }
+
+    let sub = values[0].to_string_lossy().to_ascii_lowercase();
+    let rest = &values[1..];
+
+    let mut trace = false;
+    let mut view: Option<ComViewArg> = None;
+    let mut positionals: Vec<String> = Vec::new();
+
+    let mut i = 0usize;
+    while i < rest.len() {
+        let token = rest[i].to_string_lossy().to_string();
+        if token.starts_with('-') && token.len() > 1 {
+            match token.as_str() {
+                "--trace" | "--verbose" | "-v" => {
+                    trace = true;
+                }
+                "--summary" => {
+                    trace = false;
+                }
+                "--view" => {
+                    i += 1;
+                    if i >= rest.len() {
+                        return Err(format!("--view requires a value\n\n{}", com_usage()));
+                    }
+                    let raw = rest[i].to_string_lossy().to_string();
+                    view = Some(match raw.as_str() {
+                        "64" => ComViewArg::V64,
+                        "32" => ComViewArg::V32,
+                        "both" => ComViewArg::Both,
+                        other => {
+                            return Err(format!(
+                                "invalid --view value: {other} (expected 64, 32, or both)\n\n{}",
+                                com_usage()
+                            ));
+                        }
+                    });
+                }
+                unknown => {
+                    return Err(format!("unknown com option: {unknown}\n\n{}", com_usage()));
+                }
+            }
+        } else {
+            positionals.push(token);
+        }
+        i += 1;
+    }
+
+    let sub = match sub.as_str() {
+        "clsid" => {
+            let query = single_positional(&positionals, "clsid", "<{CLSID}>")?;
+            if !is_valid_braced_guid(&query) {
+                return Err(format!(
+                    "invalid CLSID (expected {{xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}}): {query}\n\n{}",
+                    com_usage()
+                ));
+            }
+            let view = lookup_view(view, "com clsid")?;
+            ComSubcommand::Clsid { query, view }
+        }
+        "progid" => {
+            let query = single_positional(&positionals, "progid", "<PROGID>")?;
+            if query.starts_with('{') {
+                return Err(format!(
+                    "invalid ProgID (braced GUIDs are CLSIDs; use com clsid): {query}\n\n{}",
+                    com_usage()
+                ));
+            }
+            let view = lookup_view(view, "com progid")?;
+            ComSubcommand::Progid { query, view }
+        }
+        "server" => {
+            let path = single_positional(&positionals, "server", "<PATH>")?;
+            ComSubcommand::Server {
+                path: PathBuf::from(path),
+                view: view.unwrap_or(ComViewArg::Both),
+            }
+        }
+        "audit" => {
+            if view.is_some() {
+                return Err(format!(
+                    "com audit does not accept --view; the view derives from the target image\n\n{}",
+                    com_usage()
+                ));
+            }
+            if positionals.len() != 2 {
+                return Err(format!(
+                    "com audit requires <TARGET> <{{CLSID}}|PROGID>\n\n{}",
+                    com_usage()
+                ));
+            }
+            let query = positionals[1].clone();
+            if query.starts_with('{') && !is_valid_braced_guid(&query) {
+                return Err(format!(
+                    "invalid CLSID (expected {{xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}}): {query}\n\n{}",
+                    com_usage()
+                ));
+            }
+            ComSubcommand::Audit {
+                target: PathBuf::from(positionals[0].clone()),
+                query,
+            }
+        }
+        other => {
+            return Err(format!(
+                "unknown com subcommand: {other}\n\n{}",
+                com_usage()
+            ));
+        }
+    };
+
+    Ok(Command::Com(ComOptions { sub, trace }))
+}
+
+fn single_positional(
+    positionals: &[String],
+    sub: &str,
+    placeholder: &str,
+) -> Result<String, String> {
+    match positionals {
+        [one] => Ok(one.clone()),
+        [] => Err(format!(
+            "com {sub} requires {placeholder}\n\n{}",
+            com_usage()
+        )),
+        _ => Err(format!(
+            "com {sub} accepts exactly one {placeholder} argument\n\n{}",
+            com_usage()
+        )),
+    }
+}
+
+fn lookup_view(view: Option<ComViewArg>, command: &str) -> Result<ComViewArg, String> {
+    match view {
+        None => Ok(ComViewArg::V64),
+        Some(ComViewArg::Both) => Err(format!(
+            "{command} does not accept --view both\n\n{}",
+            com_usage()
+        )),
+        Some(value) => Ok(value),
+    }
+}
+
+/// Validates the canonical braced GUID form: {8-4-4-4-12} hex digits.
+pub fn is_valid_braced_guid(value: &str) -> bool {
+    let Some(inner) = value
+        .strip_prefix('{')
+        .and_then(|rest| rest.strip_suffix('}'))
+    else {
+        return false;
+    };
+    let groups: Vec<&str> = inner.split('-').collect();
+    let expected_lens = [8usize, 4, 4, 4, 12];
+    if groups.len() != expected_lens.len() {
+        return false;
+    }
+    groups
+        .iter()
+        .zip(expected_lens.iter())
+        .all(|(group, &len)| group.len() == len && group.chars().all(|c| c.is_ascii_hexdigit()))
+}
+
 pub fn usage() -> String {
     let mut out = String::new();
     out.push_str("loadwhat - diagnose Windows DLL loading failures\n\n");
     out.push_str("Usage:\n");
     out.push_str("  loadwhat run [OPTIONS] <TARGET> [TARGET_ARGS...]\n");
     out.push_str("  loadwhat imports <exe_or_dll> [--cwd <dir>]\n");
+    out.push_str("  loadwhat com clsid [OPTIONS] <{CLSID}>\n");
+    out.push_str("  loadwhat com progid [OPTIONS] <PROGID>\n");
+    out.push_str("  loadwhat com server [OPTIONS] <PATH>\n");
+    out.push_str("  loadwhat com audit [OPTIONS] <TARGET> <{CLSID}|PROGID>\n");
     out.push_str("  loadwhat help\n");
     out.push_str("\nRun options:\n");
     out.push_str("  --cwd <path>      Working directory for target process\n");
@@ -202,6 +394,25 @@ fn run_usage() -> String {
     let mut out = String::new();
     out.push_str("Usage:\n");
     out.push_str("  loadwhat run [OPTIONS] <TARGET> [TARGET_ARGS...]\n");
+    out
+}
+
+fn com_usage() -> String {
+    let mut out = String::new();
+    out.push_str("Usage:\n");
+    out.push_str("  loadwhat com clsid [OPTIONS] <{CLSID}>\n");
+    out.push_str("  loadwhat com progid [OPTIONS] <PROGID>\n");
+    out.push_str("  loadwhat com server [OPTIONS] <PATH>\n");
+    out.push_str("  loadwhat com audit [OPTIONS] <TARGET> <{CLSID}|PROGID>\n");
+    out.push_str("\nCom options:\n");
+    out.push_str("  --view <64|32>    Registry view for clsid/progid (default 64)\n");
+    out.push_str("  --view <64|32|both> Registry views for server (default both)\n");
+    out.push_str("  --trace           Print supporting COM trace tokens\n");
+    out.push_str("  --summary         Print summary output (default)\n");
+    out.push_str("  -v, --verbose     Same as --trace for com commands\n");
+    out.push_str("\nBehavior:\n");
+    out.push_str("  - com audit derives the registry view from the target image\n");
+    out.push_str("  - a braced GUID audit query is a CLSID; anything else is a ProgID\n");
     out
 }
 
@@ -412,6 +623,216 @@ mod tests {
             r"C:\work",
         ]);
         assert_eq!(opts.cwd, Some(PathBuf::from(r"C:\work")));
+    }
+
+    fn parse_com(args: &[&str]) -> super::ComOptions {
+        let mut values = vec!["loadwhat", "com"];
+        values.extend_from_slice(args);
+        match parse_from(values).unwrap() {
+            Command::Com(opts) => opts,
+            _ => panic!("expected com command"),
+        }
+    }
+
+    fn parse_com_err(args: &[&str]) -> String {
+        let mut values = vec!["loadwhat", "com"];
+        values.extend_from_slice(args);
+        parse_from(values).unwrap_err()
+    }
+
+    const GUID: &str = "{12345678-1234-1234-1234-123456789ABC}";
+
+    #[test]
+    fn com_clsid_parses_valid_guid_with_default_view() {
+        let opts = parse_com(&["clsid", GUID]);
+        assert!(!opts.trace);
+        match opts.sub {
+            super::ComSubcommand::Clsid { query, view } => {
+                assert_eq!(query, GUID);
+                assert_eq!(view, super::ComViewArg::V64);
+            }
+            other => panic!("expected clsid subcommand, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn com_clsid_rejects_malformed_guid() {
+        let err = parse_com_err(&["clsid", "{not-a-guid}"]);
+        assert!(err.contains("invalid CLSID"));
+    }
+
+    #[test]
+    fn com_clsid_rejects_unbraced_guid() {
+        let err = parse_com_err(&["clsid", "12345678-1234-1234-1234-123456789ABC"]);
+        assert!(err.contains("invalid CLSID"));
+    }
+
+    #[test]
+    fn com_clsid_accepts_view_32() {
+        let opts = parse_com(&["clsid", "--view", "32", GUID]);
+        match opts.sub {
+            super::ComSubcommand::Clsid { view, .. } => {
+                assert_eq!(view, super::ComViewArg::V32);
+            }
+            other => panic!("expected clsid subcommand, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn com_clsid_rejects_view_both() {
+        let err = parse_com_err(&["clsid", "--view", "both", GUID]);
+        assert!(err.contains("does not accept --view both"));
+    }
+
+    #[test]
+    fn com_progid_rejects_braced_query() {
+        let err = parse_com_err(&["progid", GUID]);
+        assert!(err.contains("use com clsid"));
+    }
+
+    #[test]
+    fn com_progid_parses_with_trace() {
+        let opts = parse_com(&["progid", "--trace", "Vendor.Widget"]);
+        assert!(opts.trace);
+        match opts.sub {
+            super::ComSubcommand::Progid { query, .. } => assert_eq!(query, "Vendor.Widget"),
+            other => panic!("expected progid subcommand, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn com_trace_then_summary_disables_trace() {
+        let opts = parse_com(&["progid", "--trace", "--summary", "Vendor.Widget"]);
+        assert!(!opts.trace);
+    }
+
+    #[test]
+    fn com_verbose_equals_trace() {
+        let opts = parse_com(&["progid", "-v", "Vendor.Widget"]);
+        assert!(opts.trace);
+    }
+
+    #[test]
+    fn com_server_defaults_to_both_views() {
+        let opts = parse_com(&["server", r"C:\Vendor\foo.dll"]);
+        match opts.sub {
+            super::ComSubcommand::Server { path, view } => {
+                assert_eq!(path, PathBuf::from(r"C:\Vendor\foo.dll"));
+                assert_eq!(view, super::ComViewArg::Both);
+            }
+            other => panic!("expected server subcommand, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn com_server_accepts_explicit_view() {
+        let opts = parse_com(&["server", "--view", "64", r"C:\Vendor\foo.dll"]);
+        match opts.sub {
+            super::ComSubcommand::Server { view, .. } => {
+                assert_eq!(view, super::ComViewArg::V64);
+            }
+            other => panic!("expected server subcommand, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn com_audit_classifies_braced_query_as_clsid() {
+        let opts = parse_com(&["audit", r"C:\app.exe", GUID]);
+        match opts.sub {
+            super::ComSubcommand::Audit { target, query } => {
+                assert_eq!(target, PathBuf::from(r"C:\app.exe"));
+                assert_eq!(query, GUID);
+            }
+            other => panic!("expected audit subcommand, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn com_audit_rejects_view_option() {
+        let err = parse_com_err(&["audit", "--view", "64", r"C:\app.exe", GUID]);
+        assert!(err.contains("com audit does not accept --view"));
+    }
+
+    #[test]
+    fn com_audit_rejects_malformed_braced_query() {
+        let err = parse_com_err(&["audit", r"C:\app.exe", "{oops}"]);
+        assert!(err.contains("invalid CLSID"));
+    }
+
+    #[test]
+    fn com_audit_requires_two_positionals() {
+        let err = parse_com_err(&["audit", r"C:\app.exe"]);
+        assert!(err.contains("com audit requires"));
+    }
+
+    #[test]
+    fn com_missing_subcommand_reports_usage() {
+        let err = parse_com_err(&[]);
+        assert!(err.contains("missing com subcommand"));
+    }
+
+    #[test]
+    fn com_unknown_subcommand_reports_error() {
+        let err = parse_com_err(&["bogus"]);
+        assert!(err.contains("unknown com subcommand: bogus"));
+    }
+
+    #[test]
+    fn com_unknown_option_reports_error() {
+        let err = parse_com_err(&["clsid", "--bogus", GUID]);
+        assert!(err.contains("unknown com option: --bogus"));
+    }
+
+    #[test]
+    fn com_view_requires_value() {
+        let err = parse_com_err(&["clsid", GUID, "--view"]);
+        assert!(err.contains("--view requires a value"));
+    }
+
+    #[test]
+    fn com_view_rejects_invalid_value() {
+        let err = parse_com_err(&["clsid", "--view", "16", GUID]);
+        assert!(err.contains("invalid --view value: 16"));
+    }
+
+    #[test]
+    fn com_clsid_requires_exactly_one_query() {
+        assert!(parse_com_err(&["clsid"]).contains("com clsid requires"));
+        assert!(parse_com_err(&["clsid", GUID, GUID]).contains("accepts exactly one"));
+    }
+
+    #[test]
+    fn is_valid_braced_guid_accepts_canonical_form() {
+        assert!(super::is_valid_braced_guid(GUID));
+        assert!(super::is_valid_braced_guid(
+            "{00000000-0000-0000-0000-000000000000}"
+        ));
+        assert!(super::is_valid_braced_guid(
+            "{abcdefAB-cdef-ABCD-efab-cdefabcdefab}"
+        ));
+    }
+
+    #[test]
+    fn is_valid_braced_guid_rejects_bad_forms() {
+        assert!(!super::is_valid_braced_guid(""));
+        assert!(!super::is_valid_braced_guid("{}"));
+        assert!(!super::is_valid_braced_guid("{1234}"));
+        assert!(!super::is_valid_braced_guid(
+            "12345678-1234-1234-1234-123456789ABC"
+        ));
+        assert!(!super::is_valid_braced_guid(
+            "{12345678-1234-1234-1234-123456789ABG}"
+        ));
+        assert!(!super::is_valid_braced_guid(
+            "{12345678-1234-1234-1234-123456789ABC"
+        ));
+    }
+
+    #[test]
+    fn usage_mentions_com_commands() {
+        let help = super::usage();
+        assert!(help.contains("loadwhat com clsid [OPTIONS] <{CLSID}>"));
+        assert!(help.contains("loadwhat com audit [OPTIONS] <TARGET> <{CLSID}|PROGID>"));
     }
 
     #[test]

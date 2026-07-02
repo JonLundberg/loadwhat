@@ -4,14 +4,19 @@ This file lists planned or previously-considered features that are not part of c
 
 Authoritative current behavior is defined by `docs/loadwhat_spec_v1.md`.
 
-## Not implemented (candidate future work)
+## Implemented since v1.0
 
-- COM V2 candidate scope:
+- COM V2 scope (contract: `docs/loadwhat_spec_v2.md`):
   - `com clsid <{CLSID}>`
   - `com progid <name>`
   - `com server <path>`
   - `com audit <target> <{CLSID}|ProgID>`
   - target-scoped registration-free COM manifest handling for `com audit`
+
+## Not implemented (candidate future work)
+
+- COM fixture-backed (Tier 2) and container-based (Tier 3) test coverage
+  per `docs/com_testing_strategy.md`; current coverage is Tier 1 mock-based
 - Post-V2 candidate COM work:
   - `run --com` enrichment
   - `imports --com` enrichment

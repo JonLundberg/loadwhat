@@ -37,13 +37,21 @@ pub const OUTPUT_DEBUG_STRING_EVENT: Dword = 8;
 pub const PROCESS_BASIC_INFORMATION_CLASS: u32 = 0;
 pub const IMAGE_FILE_MACHINE_UNKNOWN: u16 = 0;
 
+pub const HKEY_CURRENT_USER: Hkey = 0x80000001u32 as isize;
 pub const HKEY_LOCAL_MACHINE: Hkey = 0x80000002u32 as isize;
 pub const KEY_READ: Regsam = 0x00020019;
 pub const KEY_SET_VALUE: Regsam = 0x00000002;
+pub const KEY_WOW64_64KEY: Regsam = 0x00000100;
+pub const KEY_WOW64_32KEY: Regsam = 0x00000200;
+pub const REG_SZ: Dword = 1;
+pub const REG_EXPAND_SZ: Dword = 2;
 pub const REG_DWORD: Dword = 4;
 pub const REG_OPTION_NON_VOLATILE: Dword = 0;
 pub const ERROR_FILE_NOT_FOUND: Dword = 2;
+pub const ERROR_ACCESS_DENIED: Dword = 5;
 pub const ERROR_INVALID_PARAMETER: Dword = 87;
+pub const ERROR_MORE_DATA: Dword = 234;
+pub const ERROR_NO_MORE_ITEMS: Dword = 259;
 
 #[cfg(test)]
 pub(crate) static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -280,6 +288,17 @@ extern "system" {
     ) -> i32;
 
     pub fn RegDeleteValueW(h_key: Hkey, lp_value_name: Lpcwstr) -> i32;
+
+    pub fn RegEnumKeyExW(
+        h_key: Hkey,
+        dw_index: Dword,
+        lp_name: Lpwstr,
+        lpcch_name: *mut Dword,
+        lp_reserved: *mut Dword,
+        lp_class: Lpwstr,
+        lpcch_class: *mut Dword,
+        lpft_last_write_time: Lpvoid,
+    ) -> i32;
 
     pub fn RegCloseKey(h_key: Hkey) -> i32;
 }

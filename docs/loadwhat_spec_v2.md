@@ -1,8 +1,6 @@
-# loadwhat v2 Draft Spec
+# loadwhat v2 Spec (COM commands)
 
-Status: draft for planned COM support.
-
-This document is not the source of truth for current implemented behavior. Current behavior remains defined by [docs/loadwhat_spec_v1.md](./loadwhat_spec_v1.md).
+Status: implemented. This document is the behavior contract for the `com` command family. `run` and `imports` behavior remains defined by [docs/loadwhat_spec_v1.md](./loadwhat_spec_v1.md).
 
 Purpose: extend `loadwhat` with deterministic COM registration and activation-prerequisite diagnosis without changing the v1 behavior of `run` or `imports`.
 
@@ -198,12 +196,28 @@ When a supported server path is resolved, V2 validates it in this order:
 1. file exists
 2. PE image is readable and structurally valid
 3. if `server_kind="InprocServer32"`, machine type is compatible with the relevant caller:
-   - `com clsid` / `com progid`: the current `loadwhat` build (`x64`)
+   - `com clsid` / `com progid`: the caller implied by the selected registry view (`--view 64` -> x64, `--view 32` -> x86)
    - `com audit`: the target image machine type
 4. if `server_kind="LocalServer32"`, report machine type but do not classify x86/x64 differences as `BITNESS_MISMATCH` in V2
 5. transitive DLL dependency diagnosis using the existing deterministic import walk
 
 `LocalServer32` command lines are validated by executable path only. Command-line arguments are preserved in trace output when available but are not interpreted semantically in V2.
+
+### WOW64 file-system redirection
+
+When the relevant caller is x86, server paths under `%SystemRoot%\System32` are validated against the `%SystemRoot%\SysWOW64` equivalent, matching what a 32-bit caller would actually load. Trace mode reports the redirection:
+
+```text
+NOTE topic="com" detail="wow64-redirected" path="..."
+```
+
+### x86 dependency-walk scope
+
+The v1 dependency walk models the x64 loader. When the resolved server is a valid x86 image, the transitive dependency walk is skipped rather than producing x64-flavored results:
+
+- `COM_LOOKUP` / `COM_AUDIT` report `server_status="SKIPPED"` (not classified as an issue)
+- `com server` reports `status="OK"` when file existence and image validity passed
+- trace mode reports `NOTE topic="com" detail="out-of-scope" feature="x86-dependency-walk"`
 
 ## 7) Token contract
 
@@ -246,6 +260,8 @@ Optional fields:
 - `threading_model="..."`
 
 `BITNESS_MISMATCH` applies only to `InprocServer32`.
+`server_kind` and `threading_model` are emitted only when all matched registrations agree on the value.
+A healthy file with `registrations=0` is not classified as an issue; the exit code follows `status`.
 
 ### `COM_REGISTRATION`
 

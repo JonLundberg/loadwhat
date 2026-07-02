@@ -1,5 +1,12 @@
 // Formats and emits the public line-oriented token output contract.
 
+pub const TOKEN_COM_AUDIT: &str = "COM_AUDIT";
+pub const TOKEN_COM_DEPENDENCY_STATUS: &str = "COM_DEPENDENCY_STATUS";
+pub const TOKEN_COM_LOOKUP: &str = "COM_LOOKUP";
+pub const TOKEN_COM_MANIFEST: &str = "COM_MANIFEST";
+pub const TOKEN_COM_PROGID: &str = "COM_PROGID";
+pub const TOKEN_COM_REGISTRATION: &str = "COM_REGISTRATION";
+pub const TOKEN_COM_SERVER: &str = "COM_SERVER";
 pub const TOKEN_DEBUG_STRING: &str = "DEBUG_STRING";
 pub const TOKEN_DYNAMIC_MISSING: &str = "DYNAMIC_MISSING";
 pub const TOKEN_FIRST_BREAK: &str = "FIRST_BREAK";
