@@ -1,6 +1,10 @@
 # loadwhat
 
-`loadwhat` is a Windows x64 Rust CLI for diagnosing DLL loading failures using Win32 debug APIs directly.
+`loadwhat` is a Windows x64 CLI for diagnosing DLL loading failures. It offers static analysis, similar to Dependency Walker. It also provides dynamic analysis by using gflags to emit loader snaps **without** admin privileges.
+
+The primary use case for loadwhat is diagnosing a dll loading issue in an environment where you do not have your development and debug tools installed. 
+
+Loadwhat is a small executable, easy to load onto constrained environments such as docker containers.
 
 ## Current commands
 
@@ -32,7 +36,7 @@ target\release\loadwhat.exe
 - Default `run` mode is summary:
   - emits exactly one line for first-break diagnosis (`STATIC_MISSING`, `STATIC_BAD_IMAGE`, or `DYNAMIC_MISSING`)
   - emits `SUCCESS status=0` when startup succeeds, or when a timeout occurs after runtime module-load progress, without a diagnosed load issue
-  - a non-diagnostic timeout before meaningful runtime progress currently exits `21` with no public token output
+  - a non-diagnostic timeout before meaningful runtime progress currently exits `21` with no public token output. If the program starts and nothing happens, at some point we have to call it.
 - `--trace` enables detailed diagnostic trace output (`SEARCH_ORDER`, `SEARCH_PATH`, and related diagnosis lines).
 - `-v`/`--verbose` enables verbose runtime detail and also enables trace, unless a later `--summary` switches back to summary mode.
 - Later flags win per dimension: `--trace` vs `--summary`, `-v`/`--verbose` vs `--quiet`, and `--loader-snaps` vs `--no-loader-snaps`.
