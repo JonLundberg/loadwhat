@@ -1,6 +1,6 @@
 # loadwhat
 
-`loadwhat` is a Windows x64 CLI for diagnosing DLL loading failures. It offers static analysis, similar to Dependency Walker. It also provides dynamic analysis by using gflags to emit loader snaps **without** admin privileges.
+`loadwhat` is a Windows x64 CLI for diagnosing DLL loading failures. It offers static analysis, similar to Dependency Walker. It also provides dynamic analysis without setting gflags to emit loader snaps **without** admin privileges.
 
 The primary use case for loadwhat is diagnosing a dll loading issue in an environment where you do not have your development and debug tools installed. 
 
