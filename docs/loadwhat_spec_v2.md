@@ -131,6 +131,12 @@ Within a selected registry view:
 3. Treat `HKCU` as overriding `HKLM` for the same key path.
 4. Do not rely on direct `HKCR` reads for public behavior.
 
+An HKCU key path that exists shadows the corresponding HKLM key path even when
+the requested HKCU value is missing, empty, or not a string. Such a value does
+not fall through to HKLM. Invalid `InprocServer32` or `LocalServer32` defaults
+produce `BROKEN_REGISTRATION`; invalid `TreatAs`, `CurVer`, or ProgID `CLSID`
+values produce their corresponding broken-chain result.
+
 ### ProgID resolution
 
 `com progid` resolves as follows:
@@ -212,6 +218,15 @@ When a supported server path is resolved, V2 validates it in this order:
 4. if `server_kind="LocalServer32"`, report machine type but do not classify x86/x64 differences as `BITNESS_MISMATCH` in V2
 5. transitive DLL dependency diagnosis using the existing deterministic import walk
 
+Dependency search context is command-specific:
+
+- `com clsid`, `com progid`, and `com server` use the server directory as both
+  the application directory and current directory for their deterministic
+  standalone validation model.
+- `com audit` models activation by the target: the target executable directory
+  is the application directory, and the `loadwhat` process current directory is
+  the current directory. The COM server directory is not implicitly searched.
+
 `LocalServer32` command lines are validated by executable path only. Command-line arguments are preserved in trace output when available but are not interpreted semantically in V2.
 
 ### WOW64 file-system redirection
@@ -248,7 +263,7 @@ Optional fields:
 - `hive="HKCU|HKLM"`
 - `view="64|32"`
 - `server_kind="InprocServer32|LocalServer32"`
-- `server_status="OK|SERVER_MISSING|SERVER_BAD_IMAGE|SERVER_DEPS_MISSING|BITNESS_MISMATCH|SKIPPED"`
+- `server_status="OK|SERVER_MISSING|SERVER_BAD_IMAGE|SERVER_DEPS_MISSING|BITNESS_MISMATCH|SKIPPED|INDETERMINATE"`
 
 `status` is a lookup result. `server_status` is a separate optional server-health result.
 `BITNESS_MISMATCH` applies only to `InprocServer32`.
@@ -260,7 +275,7 @@ Purpose: validation result for `com server`, or supporting server detail in trac
 Required fields:
 
 - `path="..."`
-- `status="OK|SERVER_MISSING|SERVER_BAD_IMAGE|SERVER_DEPS_MISSING|BITNESS_MISMATCH|ACCESS_DENIED"`
+- `status="OK|SERVER_MISSING|SERVER_BAD_IMAGE|SERVER_DEPS_MISSING|BITNESS_MISMATCH|ACCESS_DENIED|INDETERMINATE"`
 
 Optional fields:
 
@@ -329,8 +344,8 @@ Required fields:
 - `target_machine="x64|x86|unknown"`
 - `query_kind="clsid|progid"`
 - `query="..."`
-- `source="registry|manifest"`
-- `status="OK|NOT_REGISTERED|PROGID_BROKEN|TREATAS_BROKEN|BROKEN_REGISTRATION|SERVER_MISSING|SERVER_BAD_IMAGE|SERVER_DEPS_MISSING|BITNESS_MISMATCH|ACCESS_DENIED"`
+- `source="registry|manifest|none"`
+- `status="OK|NOT_REGISTERED|PROGID_BROKEN|TREATAS_BROKEN|BROKEN_REGISTRATION|SERVER_MISSING|SERVER_BAD_IMAGE|SERVER_DEPS_MISSING|BITNESS_MISMATCH|ACCESS_DENIED|INDETERMINATE|UNSUPPORTED_ARCHITECTURE"`
 
 Optional fields:
 
@@ -372,6 +387,13 @@ COM_AUDIT target="app.exe" target_machine="x86" query_kind="clsid" query="{...}"
 - `22` = unsupported architecture for the requested operation
 
 `ACCESS_DENIED` is a public result, but it still exits `21` because the diagnosis is incomplete.
+
+After a COM subcommand passes CLI parsing, indeterminate and unsupported target
+failures still emit exactly one command-family summary token. `com clsid` and
+`com progid` use `server_status="INDETERMINATE"`; `com server` uses
+`status="INDETERMINATE"`; `com audit` uses `source="none"` with
+`status="INDETERMINATE|UNSUPPORTED_ARCHITECTURE"` and
+`target_machine="unknown"`. Diagnostic detail may also be written to stderr.
 
 For `COM_AUDIT`, `BITNESS_MISMATCH` applies only when the selected server kind is `InprocServer32`.
 

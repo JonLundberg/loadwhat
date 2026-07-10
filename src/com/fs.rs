@@ -43,6 +43,13 @@ pub struct DepWalkReport {
     pub safedll: bool,
 }
 
+/// Fixed v1 DLL search inputs used while walking a COM server's imports.
+#[derive(Clone, Debug)]
+pub struct DepSearchContext {
+    pub app_dir: String,
+    pub cwd: String,
+}
+
 /// Abstraction over the file-system checks needed by COM diagnosis.
 pub trait ComFileSystem {
     /// Check whether a file exists at the given path.
@@ -53,7 +60,11 @@ pub trait ComFileSystem {
     fn read_file_header(&self, path: &str, max_bytes: usize) -> Option<Vec<u8>>;
 
     /// Run the deterministic transitive dependency walk over a server binary.
-    fn walk_dependencies(&self, path: &str) -> Result<DepWalkReport, String>;
+    fn walk_dependencies(
+        &self,
+        path: &str,
+        context: &DepSearchContext,
+    ) -> Result<DepWalkReport, String>;
 
     /// Extract the embedded RT_MANIFEST resource of a PE file, if any.
     fn embedded_manifest(&self, path: &str) -> Option<String>;
@@ -64,7 +75,7 @@ pub use mock::MockFileSystem;
 
 #[cfg(test)]
 mod mock {
-    use super::{ComFileSystem, DepFailure, DepStatus, DepWalkReport};
+    use super::{ComFileSystem, DepFailure, DepSearchContext, DepStatus, DepWalkReport};
     use std::collections::{HashMap, HashSet};
 
     /// In-memory file system mock. Paths are stored lowercased.
@@ -103,13 +114,6 @@ mod mock {
         }
     }
 
-    fn parent_dir(path: &str) -> &str {
-        match path.rfind('\\') {
-            Some(idx) => &path[..idx],
-            None => "",
-        }
-    }
-
     impl ComFileSystem for MockFileSystem {
         fn file_exists(&self, path: &str) -> bool {
             self.files.contains_key(&path.to_ascii_lowercase())
@@ -121,11 +125,14 @@ mod mock {
                 .map(|data| data[..data.len().min(max_bytes)].to_vec())
         }
 
-        /// Mock walk: dependencies resolve only in the server's own directory,
-        /// which is sufficient for exercising the resolver's classification logic.
-        fn walk_dependencies(&self, path: &str) -> Result<DepWalkReport, String> {
+        /// Mock walk: dependencies resolve in the supplied application directory.
+        fn walk_dependencies(
+            &self,
+            path: &str,
+            context: &DepSearchContext,
+        ) -> Result<DepWalkReport, String> {
             let root_lower = path.to_ascii_lowercase();
-            let root_dir = parent_dir(&root_lower).to_string();
+            let app_dir = context.app_dir.to_ascii_lowercase();
             let root_name = root_lower
                 .rsplit('\\')
                 .next()
@@ -149,7 +156,7 @@ mod mock {
                     if dll.starts_with("api-ms-win-") || dll.starts_with("ext-ms-win-") {
                         continue;
                     }
-                    let candidate = format!("{root_dir}\\{dll}");
+                    let candidate = format!("{app_dir}\\{dll}");
                     match self.files.get(&candidate) {
                         None => failures.push(DepFailure {
                             dll: dll.clone(),

@@ -18,6 +18,10 @@ all pass).
 
 ### P1 - `com audit` dependency walk ignores target load context
 
+**Status:** Resolved 2026-07-09. Audit validation now carries target app-dir and
+invocation-CWD context through the existing deterministic dependency walk, with
+unit and Windows-container coverage for both opposing directory layouts.
+
 **Where:** `RealComFileSystem::walk_dependencies`, `src/main.rs`.
 
 **Problem:** `com audit` is target-scoped, but server dependency validation only
@@ -41,6 +45,10 @@ server directory contain different dependency sets.
 
 ### P2 - HKCU override can incorrectly fall through to HKLM
 
+**Status:** Resolved 2026-07-09. Present HKCU keys with missing, empty, or
+non-string values shadow HKLM and classify the registration as broken. Mock and
+real-container registry tests cover the behavior.
+
 **Where:** `ComResolver::merged_read_string`, `src/com/resolver.rs`.
 
 **Problem:** The merge helper reads HKCU first, but if the HKCU value is missing,
@@ -56,6 +64,10 @@ registration as broken instead of falling through.
 missing, empty, and non-string HKCU default values.
 
 ### P2 - Indeterminate COM paths skip token output
+
+**Status:** Resolved 2026-07-09. The v2 contract now defines greppable
+`INDETERMINATE` and `UNSUPPORTED_ARCHITECTURE` summary results, with
+fixture-backed public CLI tests for the principal error paths.
 
 **Where:** `com_error_exit`, `src/main.rs`.
 
@@ -73,6 +85,11 @@ stderr.
 target, unreadable server file, and unsupported target machine.
 
 ### P3 - COM coverage is not yet broad enough for shipped behavior
+
+**Status:** Resolved for the reviewed gaps 2026-07-09. The Windows-container
+suite exercises real HKCU/HKLM merge behavior, 32/64-bit views, x64/x86 PEs,
+CLI tokens and exit codes, sidecar manifests, server dependencies, and host
+registry sentinels. File-only COM error paths also run under `cargo xtask test`.
 
 **Where:** `src/com/*`, `src/cli.rs`, `tests/integration.rs`.
 

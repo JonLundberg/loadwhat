@@ -24,10 +24,22 @@ Invoke-LoadWhatCase `
     -ExpectedSummaryPattern '^COM_LOOKUP .*status="REGISTERED" .*hive="HKLM" .*view="32" .*server_status="BITNESS_MISMATCH"$'
 
 Invoke-LoadWhatCase `
+    -Name 'wow64-system32-redirect' `
+    -Arguments @('com', 'clsid', '--view', '32', '{7F4D0011-4C57-4A54-9000-000000000011}') `
+    -ExpectedExitCode 0 `
+    -ExpectedSummaryPattern '^COM_LOOKUP .*status="REGISTERED" .*hive="HKLM" .*view="32" .*server_status="SKIPPED"$'
+
+Invoke-LoadWhatCase `
     -Name 'hkcu-overrides-hklm' `
     -Arguments @('com', 'clsid', '--view', '64', '{7F4D0002-4C57-4A54-9000-000000000002}') `
     -ExpectedExitCode 10 `
     -ExpectedSummaryPattern '^COM_LOOKUP .*status="REGISTERED" .*hive="HKCU" .*server_status="SERVER_DEPS_MISSING"$'
+
+Invoke-LoadWhatCase `
+    -Name 'broken-hkcu-key-does-not-fall-through' `
+    -Arguments @('com', 'clsid', '--view', '64', '{7F4D0010-4C57-4A54-9000-000000000010}') `
+    -ExpectedExitCode 10 `
+    -ExpectedSummaryPattern '^COM_LOOKUP .*status="BROKEN_REGISTRATION" .*hive="HKCU" .*view="64"$'
 
 Invoke-LoadWhatCase `
     -Name 'curver-chain' `
@@ -70,6 +82,18 @@ Invoke-LoadWhatCase `
     -Arguments @('com', 'audit', 'C:\loadwhat\fixtures\target\lwtest_com_target_x64.exe', '{7F4D0007-4C57-4A54-9000-000000000007}') `
     -ExpectedExitCode 0 `
     -ExpectedSummaryPattern '^COM_AUDIT .*target_machine="x64" .*source="manifest" .*status="OK" .*server_path="C:\\\\loadwhat\\\\fixtures\\\\target\\\\lwtest_manifest_server.dll"$'
+
+Invoke-LoadWhatCase `
+    -Name 'audit-target-directory-satisfies-dependency' `
+    -Arguments @('com', 'audit', 'C:\loadwhat\fixtures\context\target_has_dep\lwtest_com_target_x64.exe', '{7F4D0008-4C57-4A54-9000-000000000008}') `
+    -ExpectedExitCode 0 `
+    -ExpectedSummaryPattern '^COM_AUDIT .*source="registry" .*status="OK" .*server_path="C:\\\\loadwhat\\\\fixtures\\\\context\\\\server_missing_dep\\\\lwtest_com_context_server.dll"$'
+
+Invoke-LoadWhatCase `
+    -Name 'audit-server-directory-is-not-implicit' `
+    -Arguments @('com', 'audit', 'C:\loadwhat\fixtures\context\target_missing_dep\lwtest_com_target_x64.exe', '{7F4D0009-4C57-4A54-9000-000000000009}') `
+    -ExpectedExitCode 10 `
+    -ExpectedSummaryPattern '^COM_AUDIT .*source="registry" .*status="SERVER_DEPS_MISSING" .*server_path="C:\\\\loadwhat\\\\fixtures\\\\context\\\\server_has_dep\\\\lwtest_com_context_server.dll"$'
 
 Invoke-LoadWhatCase `
     -Name 'x86-server-file' `

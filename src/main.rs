@@ -602,17 +602,20 @@ impl ComFileSystem for RealComFileSystem {
         Some(buffer)
     }
 
-    fn walk_dependencies(&self, path: &str) -> Result<DepWalkReport, String> {
+    fn walk_dependencies(
+        &self,
+        path: &str,
+        context: &com::fs::DepSearchContext,
+    ) -> Result<DepWalkReport, String> {
         let module_path = Path::new(path);
-        let cwd = module_path
-            .parent()
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| PathBuf::from("."));
+        let app_dir = Path::new(&context.app_dir);
+        let cwd = Path::new(&context.cwd);
         let runtime_loaded: HashSet<String> = HashSet::new();
         let runtime_observed: HashMap<String, PathBuf> = HashMap::new();
-        let report = diagnose_static_imports(
+        let report = diagnose_static_imports_in_context(
             module_path,
-            &cwd,
+            app_dir,
+            cwd,
             &runtime_loaded,
             &runtime_observed,
             env_path_override(&[]),
@@ -681,16 +684,10 @@ fn com_reg_view(view: ComViewArg) -> RegView {
 }
 
 #[cfg(windows)]
-fn com_error_exit(error: ComError) -> i32 {
+fn com_error_parts(error: &ComError) -> (&'static str, i32, &str) {
     match error {
-        ComError::Indeterminate(message) => {
-            eprintln!("{message}");
-            21
-        }
-        ComError::UnsupportedArchitecture(message) => {
-            eprintln!("{message}");
-            22
-        }
+        ComError::Indeterminate(message) => ("INDETERMINATE", 21, message),
+        ComError::UnsupportedArchitecture(message) => ("UNSUPPORTED_ARCHITECTURE", 22, message),
     }
 }
 
@@ -725,7 +722,10 @@ fn com_lookup_command(
         RegView::V32 => MachineType::X86,
     };
     if let Err(error) = resolver.validate_lookup_server(&mut result, Some(expected)) {
-        return com_error_exit(error);
+        let (_, code, message) = com_error_parts(&error);
+        eprintln!("{message}");
+        emit_com_lookup_with_server_status(kind, query, &result, Some("INDETERMINATE"));
+        return code;
     }
 
     if trace {
@@ -737,6 +737,16 @@ fn com_lookup_command(
 
 #[cfg(windows)]
 fn emit_com_lookup(kind: QueryKind, query: &str, result: &ComLookupResult) {
+    emit_com_lookup_with_server_status(kind, query, result, None);
+}
+
+#[cfg(windows)]
+fn emit_com_lookup_with_server_status(
+    kind: QueryKind,
+    query: &str,
+    result: &ComLookupResult,
+    server_status_override: Option<&str>,
+) {
     let mut fields = vec![
         field("query_kind", quote(kind.as_token())),
         field("query", quote(query)),
@@ -752,7 +762,9 @@ fn emit_com_lookup(kind: QueryKind, query: &str, result: &ComLookupResult) {
     if let Some(server_kind) = result.server_kind {
         fields.push(field("server_kind", quote(server_kind.as_token())));
     }
-    if let Some(server) = &result.server {
+    if let Some(status) = server_status_override {
+        fields.push(field("server_status", quote(status)));
+    } else if let Some(server) = &result.server {
         fields.push(field("server_status", quote(server.status.as_token())));
     }
     emit(TOKEN_COM_LOOKUP, &fields);
@@ -913,7 +925,18 @@ fn com_server_command(
     // expectation and report the machine type instead.
     let validation = match resolver.validate_server_file(&path_str, ServerKind::Local, None) {
         Ok(validation) => validation,
-        Err(error) => return com_error_exit(error),
+        Err(error) => {
+            let (status, code, message) = com_error_parts(&error);
+            eprintln!("{message}");
+            emit(
+                TOKEN_COM_SERVER,
+                &[
+                    field("path", quote(&path_str)),
+                    field("status", quote(status)),
+                ],
+            );
+            return code;
+        }
     };
 
     let (registrations, denied) = match resolver.reverse_lookup(&path_str, views) {
@@ -1010,9 +1033,30 @@ fn com_audit_command(resolver: &ComResolver, target: &Path, query: &str, trace: 
         QueryKind::Progid
     };
 
-    let audit = match resolver.audit(&target_str, query, query_kind) {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| {
+        absolute
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."))
+    });
+    let audit = match resolver.audit_with_cwd(&target_str, query, query_kind, &display_path(&cwd)) {
         Ok(audit) => audit,
-        Err(error) => return com_error_exit(error),
+        Err(error) => {
+            let (status, code, message) = com_error_parts(&error);
+            eprintln!("{message}");
+            emit(
+                TOKEN_COM_AUDIT,
+                &[
+                    field("target", quote(&target_str)),
+                    field("target_machine", quote("unknown")),
+                    field("query_kind", quote(query_kind.as_token())),
+                    field("query", quote(query)),
+                    field("source", quote("none")),
+                    field("status", quote(status)),
+                ],
+            );
+            return code;
+        }
     };
 
     if trace {
@@ -1225,6 +1269,27 @@ fn diagnose_static_imports(
             module_path.display()
         )
     })?;
+    diagnose_static_imports_in_context(
+        module_path,
+        app_dir,
+        cwd,
+        runtime_loaded,
+        runtime_observed,
+        path_env_override,
+        emit_mode,
+    )
+}
+
+#[cfg(windows)]
+fn diagnose_static_imports_in_context(
+    module_path: &Path,
+    app_dir: &Path,
+    cwd: &Path,
+    runtime_loaded: &HashSet<String>,
+    runtime_observed: &HashMap<String, PathBuf>,
+    path_env_override: Option<OsString>,
+    emit_mode: StaticEmitMode,
+) -> Result<StaticReport, String> {
     let context = SearchContext::from_environment(app_dir, cwd, path_env_override)?;
     let root_module_name = module_name_lower(module_path);
 

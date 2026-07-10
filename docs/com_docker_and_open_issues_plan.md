@@ -48,7 +48,8 @@ Last updated: 2026-07-09 by Codex.
 - COM tests are mostly mock/unit tests.
 - Existing `cargo test` passed with 264 tests.
 - Existing `cargo xtask test` passed during review with 99 integration tests.
-- Docker/container COM testing is not implemented.
+- Docker/container COM testing is implemented with guarded registry fixtures,
+  real x64/x86 PEs, Hyper-V isolation, and host sentinel checks.
 - Recent review findings are recorded in `docs/code_review_findings.md`.
 - This plan requires all COM registry mutation to happen inside a Windows container. Host-side registry mutation is out of bounds.
 - Added `docs/windows_docker_container_setup.md` for host setup.
@@ -70,15 +71,15 @@ Last updated: 2026-07-09 by Codex.
 | D4 | done | P0 | Codex | Add container-safe registry fixture scripts |
 | D5 | done | P0 | Codex | Add COM container smoke tests for real registry views |
 | D5A | done | P0 | Codex | Add host-registry sentinel checks around container tests |
-| D6 | in_progress | P1 | Codex | Add container tests for HKCU/HKLM override behavior |
-| D7 | in_progress | P1 | Codex | Add container tests for x86/x64 registry views and WOW64 server paths |
+| D6 | done | P1 | Codex | Add container tests for HKCU/HKLM override behavior |
+| D7 | done | P1 | Codex | Add container tests for x86/x64 registry views and WOW64 server paths |
 | D8 | in_progress | P1 | Codex | Add container tests for COM server dependency failures |
 | D9 | done | P1 | Codex | Document container workflow and cleanup expectations |
-| C1 | todo | P1 | unassigned | Fix `com audit` dependency walk target-context issue |
-| C2 | todo | P2 | unassigned | Fix HKCU-present broken value falling through to HKLM |
-| C3 | todo | P2 | unassigned | Decide and fix COM indeterminate-error token contract |
-| C4 | todo | P3 | unassigned | Add fixture-backed non-container COM CLI tests |
-| C5 | todo | P3 | unassigned | Clean up COM docs after behavior fixes |
+| C1 | done | P1 | Codex | Fix `com audit` dependency walk target-context issue |
+| C2 | done | P2 | Codex | Fix HKCU-present broken value falling through to HKLM |
+| C3 | done | P2 | Codex | Decide and fix COM indeterminate-error token contract |
+| C4 | done | P3 | Codex | Add fixture-backed non-container COM CLI tests |
+| C5 | in_progress | P3 | Codex | Clean up COM docs after behavior fixes |
 | V1-1 | todo | P2 | unassigned | Address summary-mode silent failure paths |
 | V1-2 | todo | P2 | unassigned | Preserve empty target arguments |
 | V1-3 | todo | P2 | unassigned | Gate `LOADWHAT_TEST_MODE` out of release builds |
@@ -553,6 +554,29 @@ The full effort is complete when:
   precedence, and a real x86 server image.
 - Host registry sentinels passed before and after every Docker run. No host COM
   registry mutation was performed.
+
+### 2026-07-09 - Codex COM issue fixes under container coverage
+
+- C1: added explicit dependency search context. `com audit` now uses the target
+  executable directory as `app_dir` and the invoking process directory as
+  `cwd`; standalone lookup/server commands remain server-centric.
+- C2: changed merged string reads so a present but invalid HKCU key path shadows
+  HKLM. Missing, empty, and non-string server defaults now report
+  `BROKEN_REGISTRATION`.
+- C3: selected the greppable token option. Parsed COM commands now emit one
+  command-family summary token for indeterminate and unsupported-architecture
+  failures while retaining exit codes 21 and 22.
+- Added fixture-backed public CLI tests for missing, non-PE, and unsupported
+  audit targets and a malformed server dependency walk.
+- Ran `cargo check --workspace`; passed.
+- Ran `cargo test --locked`; passed with 269 tests.
+- Ran `cargo xtask test`; passed with 103 integration tests.
+- Ran `cargo xtask test-container`; passed with 15 container cases before the
+  final WOW64 registry-path case was added. Host sentinels passed before and
+  after the run.
+- Ran `cargo xtask test-container` again after adding the WOW64 case; all 16
+  container cases passed, including `System32` to `SysWOW64` validation. Host
+  sentinels passed before and after the run.
 
 ### 2026-07-09 - Codex Windows container setup success
 

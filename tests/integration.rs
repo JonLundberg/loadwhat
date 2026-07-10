@@ -6,6 +6,9 @@ mod harness;
 #[path = "integration/cli_validation_edge_cases.rs"]
 mod cli_validation_edge_cases;
 #[cfg(all(windows, feature = "harness-tests"))]
+#[path = "integration/com_cli_contract.rs"]
+mod com_cli_contract;
+#[cfg(all(windows, feature = "harness-tests"))]
 #[path = "integration/dynamic_all_later_loaded.rs"]
 mod dynamic_all_later_loaded;
 #[cfg(all(windows, feature = "harness-tests"))]

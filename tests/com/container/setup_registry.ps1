@@ -20,6 +20,8 @@ $ids = @{
     Audit = '{7F4D0007-4C57-4A54-9000-000000000007}'
     TargetHasDep = '{7F4D0008-4C57-4A54-9000-000000000008}'
     ServerHasDep = '{7F4D0009-4C57-4A54-9000-000000000009}'
+    BrokenOverride = '{7F4D0010-4C57-4A54-9000-000000000010}'
+    Wow64System32 = '{7F4D0011-4C57-4A54-9000-000000000011}'
 }
 
 function Open-ClassesRoot {
@@ -89,3 +91,6 @@ Set-StringValue $hklm $view64 "CLSID\$($ids.TreatAs)\TreatAs" '' $ids.Basic
 Set-StringValue $hklm $view64 "CLSID\$($ids.Audit)\InprocServer32" '' $healthyDll
 Set-StringValue $hklm $view64 "CLSID\$($ids.TargetHasDep)\InprocServer32" '' 'C:\loadwhat\fixtures\context\server_missing_dep\lwtest_com_context_server.dll'
 Set-StringValue $hklm $view64 "CLSID\$($ids.ServerHasDep)\InprocServer32" '' 'C:\loadwhat\fixtures\context\server_has_dep\lwtest_com_context_server.dll'
+Set-StringValue $hklm $view64 "CLSID\$($ids.BrokenOverride)\InprocServer32" '' $healthyDll
+Set-StringValue $hkcu $view64 "CLSID\$($ids.BrokenOverride)\InprocServer32" 'ThreadingModel' 'Both'
+Set-StringValue $hklm $view32 "CLSID\$($ids.Wow64System32)\InprocServer32" '' 'C:\Windows\System32\kernel32.dll'

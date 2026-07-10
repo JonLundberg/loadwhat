@@ -3,7 +3,7 @@
 
 use std::collections::HashSet;
 
-use super::fs::{ComFileSystem, DepFailure};
+use super::fs::{ComFileSystem, DepFailure, DepSearchContext};
 use super::manifest::{parse_manifest_com_classes, ManifestComClass};
 use super::registry::{ComRegistry, RegLocation, RegValue};
 use super::{
@@ -180,6 +180,7 @@ enum KeyState {
 
 enum MergedRead {
     Found { text: String, hive: Hive },
+    Invalid { hive: Hive },
     Absent,
     Denied,
 }
@@ -208,8 +209,8 @@ impl<'a> ComResolver<'a> {
         KeyState::Absent
     }
 
-    /// HKCU-over-HKLM merged string read within one view. Non-string values
-    /// are treated as absent; REG_EXPAND_SZ values are env-expanded.
+    /// HKCU-over-HKLM merged string read within one view. A present key shadows
+    /// the lower-priority hive even when its value is unusable.
     fn merged_read_string(&self, view: RegView, subkey: &str, name: &str) -> MergedRead {
         for hive in [Hive::Hkcu, Hive::Hklm] {
             let loc = RegLocation::of(hive, view);
@@ -224,6 +225,9 @@ impl<'a> ComResolver<'a> {
                     };
                 }
                 RegValue::AccessDenied => return MergedRead::Denied,
+                _ if self.registry.key_exists(loc, subkey) => {
+                    return MergedRead::Invalid { hive };
+                }
                 _ => {}
             }
         }
@@ -287,6 +291,10 @@ impl<'a> ComResolver<'a> {
                     current = next;
                     continue;
                 }
+                MergedRead::Invalid { .. } => {
+                    result.status = LookupStatus::TreatAsBroken;
+                    return result;
+                }
                 MergedRead::Absent => {}
             }
 
@@ -322,6 +330,11 @@ impl<'a> ComResolver<'a> {
                         }
                     }
                     break;
+                }
+                MergedRead::Invalid { hive } => {
+                    result.hive = Some(hive);
+                    result.status = LookupStatus::BrokenRegistration;
+                    return result;
                 }
                 MergedRead::Absent => {}
             }
@@ -394,6 +407,11 @@ impl<'a> ComResolver<'a> {
                         continue;
                     }
                 }
+                MergedRead::Invalid { .. } => {
+                    let mut result = ComLookupResult::new(view, LookupStatus::ProgidBroken);
+                    result.progid_chain = chain;
+                    return result;
+                }
                 MergedRead::Absent => {}
             }
 
@@ -408,6 +426,11 @@ impl<'a> ComResolver<'a> {
                 return result;
             }
             MergedRead::Absent => {
+                let mut result = ComLookupResult::new(view, LookupStatus::ProgidBroken);
+                result.progid_chain = chain;
+                return result;
+            }
+            MergedRead::Invalid { .. } => {
                 let mut result = ComLookupResult::new(view, LookupStatus::ProgidBroken);
                 result.progid_chain = chain;
                 return result;
@@ -440,7 +463,9 @@ impl<'a> ComResolver<'a> {
         let (Some(path), Some(kind)) = (result.server_path.clone(), result.server_kind) else {
             return Ok(());
         };
-        let validation = self.validate_server_file(&path, kind, expected_machine)?;
+        let context = server_dependency_context(&path);
+        let validation =
+            self.validate_server_file_with_context(&path, kind, expected_machine, &context)?;
         result.server = Some(validation);
         Ok(())
     }
@@ -450,6 +475,17 @@ impl<'a> ComResolver<'a> {
         path: &str,
         kind: ServerKind,
         expected_machine: Option<MachineType>,
+    ) -> Result<ServerValidation, ComError> {
+        let context = server_dependency_context(path);
+        self.validate_server_file_with_context(path, kind, expected_machine, &context)
+    }
+
+    fn validate_server_file_with_context(
+        &self,
+        path: &str,
+        kind: ServerKind,
+        expected_machine: Option<MachineType>,
+        context: &DepSearchContext,
     ) -> Result<ServerValidation, ComError> {
         // A 32-bit caller sees System32 paths redirected to SysWOW64;
         // validate what that caller would actually load.
@@ -500,7 +536,7 @@ impl<'a> ComResolver<'a> {
 
         let walk = self
             .fs
-            .walk_dependencies(path)
+            .walk_dependencies(path, context)
             .map_err(ComError::Indeterminate)?;
 
         Ok(ServerValidation {
@@ -604,11 +640,23 @@ impl<'a> ComResolver<'a> {
     /// Target-scoped audit per spec section 4: derive the registry view from
     /// the target machine type, prefer manifest declarations, fall back to
     /// registry resolution, and validate the resolved server.
+    #[cfg(test)]
     pub fn audit(
         &self,
         target_path: &str,
         query: &str,
         query_kind: QueryKind,
+    ) -> Result<ComAuditResult, ComError> {
+        let target_dir = parent_dir(target_path);
+        self.audit_with_cwd(target_path, query, query_kind, target_dir)
+    }
+
+    pub fn audit_with_cwd(
+        &self,
+        target_path: &str,
+        query: &str,
+        query_kind: QueryKind,
+        cwd: &str,
     ) -> Result<ComAuditResult, ComError> {
         if !self.fs.file_exists(target_path) {
             return Err(ComError::Indeterminate(format!(
@@ -633,15 +681,29 @@ impl<'a> ComResolver<'a> {
             }
         };
 
+        let dependency_context = DepSearchContext {
+            app_dir: parent_dir(target_path).to_string(),
+            cwd: cwd.to_string(),
+        };
+
         if let Some(hit) = self.manifest_hit(target_path, query, query_kind) {
-            return self.audit_from_manifest(target_machine, view, hit);
+            return self.audit_from_manifest(target_machine, view, hit, &dependency_context);
         }
 
         let mut lookup = match query_kind {
             QueryKind::Clsid => self.resolve_clsid(query, view),
             QueryKind::Progid => self.resolve_progid(query, view),
         };
-        self.validate_lookup_server(&mut lookup, Some(target_machine))?;
+        if lookup.status == LookupStatus::Registered {
+            if let (Some(path), Some(kind)) = (lookup.server_path.clone(), lookup.server_kind) {
+                lookup.server = Some(self.validate_server_file_with_context(
+                    &path,
+                    kind,
+                    Some(target_machine),
+                    &dependency_context,
+                )?);
+            }
+        }
 
         let status = if lookup.status != LookupStatus::Registered {
             lookup.status.as_token()
@@ -722,6 +784,7 @@ impl<'a> ComResolver<'a> {
         target_machine: MachineType,
         view: RegView,
         hit: ManifestHit,
+        dependency_context: &DepSearchContext,
     ) -> Result<ComAuditResult, ComError> {
         let clsid = Some(hit.decl.clsid.clone());
         let Some(server_path) = hit.resolved_server.clone() else {
@@ -741,8 +804,12 @@ impl<'a> ComResolver<'a> {
         };
 
         // Registration-free COM servers load in-process.
-        let validation =
-            self.validate_server_file(&server_path, ServerKind::Inproc, Some(target_machine))?;
+        let validation = self.validate_server_file_with_context(
+            &server_path,
+            ServerKind::Inproc,
+            Some(target_machine),
+            dependency_context,
+        )?;
         let status = match validation.status {
             ServerStatus::Ok | ServerStatus::Skipped => "OK",
             other => other.as_token(),
@@ -760,6 +827,20 @@ impl<'a> ComResolver<'a> {
             lookup: None,
             server: Some(validation),
         })
+    }
+}
+
+fn parent_dir(path: &str) -> &str {
+    path.rfind(['\\', '/'])
+        .map(|index| &path[..index])
+        .unwrap_or("")
+}
+
+fn server_dependency_context(path: &str) -> DepSearchContext {
+    let directory = parent_dir(path).to_string();
+    DepSearchContext {
+        app_dir: directory.clone(),
+        cwd: directory,
     }
 }
 
@@ -1069,6 +1150,81 @@ mod tests {
 
         assert_eq!(result.status, LookupStatus::Registered);
         assert_eq!(result.hive, Some(Hive::Hklm));
+    }
+
+    #[test]
+    fn hkcu_server_key_without_default_does_not_fall_through_to_hklm() {
+        let (mut reg, fs) = resolver_parts();
+        set_inproc(
+            &mut reg,
+            RegLocation::Hklm64,
+            "{BROKEN-OVERRIDE}",
+            r"C:\Machine\healthy.dll",
+        );
+        set_str(
+            &mut reg,
+            RegLocation::Hkcu64,
+            r"Software\Classes\CLSID\{BROKEN-OVERRIDE}\InprocServer32",
+            "ThreadingModel",
+            "Both",
+        );
+
+        let resolver = ComResolver::new(&reg, &fs);
+        let result = resolver.resolve_clsid("{BROKEN-OVERRIDE}", RegView::V64);
+
+        assert_eq!(result.status, LookupStatus::BrokenRegistration);
+        assert_eq!(result.hive, Some(Hive::Hkcu));
+        assert_eq!(result.server_path, None);
+    }
+
+    #[test]
+    fn empty_hkcu_server_default_does_not_fall_through_to_hklm() {
+        let (mut reg, fs) = resolver_parts();
+        set_inproc(
+            &mut reg,
+            RegLocation::Hklm64,
+            "{EMPTY-OVERRIDE}",
+            r"C:\Machine\healthy.dll",
+        );
+        reg.set(
+            RegLocation::Hkcu64,
+            r"Software\Classes\CLSID\{EMPTY-OVERRIDE}\InprocServer32",
+            "",
+            RegValue::String("   ".to_string()),
+        );
+
+        let resolver = ComResolver::new(&reg, &fs);
+        assert_eq!(
+            resolver
+                .resolve_clsid("{EMPTY-OVERRIDE}", RegView::V64)
+                .status,
+            LookupStatus::BrokenRegistration
+        );
+    }
+
+    #[test]
+    fn non_string_hkcu_server_default_does_not_fall_through_to_hklm() {
+        let (mut reg, fs) = resolver_parts();
+        set_inproc(
+            &mut reg,
+            RegLocation::Hklm64,
+            "{DWORD-OVERRIDE}",
+            r"C:\Machine\healthy.dll",
+        );
+        reg.set(
+            RegLocation::Hkcu64,
+            r"Software\Classes\CLSID\{DWORD-OVERRIDE}\InprocServer32",
+            "",
+            RegValue::Dword(1),
+        );
+
+        let resolver = ComResolver::new(&reg, &fs);
+        assert_eq!(
+            resolver
+                .resolve_clsid("{DWORD-OVERRIDE}", RegView::V64)
+                .status,
+            LookupStatus::BrokenRegistration
+        );
     }
 
     #[test]
@@ -1683,6 +1839,49 @@ mod tests {
 
         assert_eq!(audit.source, AuditSource::Registry);
         assert_eq!(audit.status, "OK");
+    }
+
+    #[test]
+    fn audit_dependency_walk_uses_target_application_directory() {
+        let (mut reg, mut fs) = resolver_parts();
+        let target = audit_target(&mut fs);
+        set_inproc(
+            &mut reg,
+            RegLocation::Hklm64,
+            "{TARGET-CONTEXT}",
+            r"C:\servers\server.dll",
+        );
+        fs.add_pe(r"C:\servers\server.dll", &["helper.dll"]);
+        fs.add_pe(r"C:\app\helper.dll", &[]);
+
+        let resolver = ComResolver::new(&reg, &fs);
+        let audit = resolver
+            .audit_with_cwd(target, "{TARGET-CONTEXT}", QueryKind::Clsid, r"C:\working")
+            .unwrap();
+
+        assert_eq!(audit.status, "OK");
+    }
+
+    #[test]
+    fn audit_dependency_walk_does_not_implicitly_search_server_directory() {
+        let (mut reg, mut fs) = resolver_parts();
+        let target = audit_target(&mut fs);
+        set_inproc(
+            &mut reg,
+            RegLocation::Hklm64,
+            "{SERVER-CONTEXT}",
+            r"C:\servers\server.dll",
+        );
+        fs.add_pe(r"C:\servers\server.dll", &["helper.dll"]);
+        fs.add_pe(r"C:\servers\helper.dll", &[]);
+
+        let resolver = ComResolver::new(&reg, &fs);
+        let audit = resolver
+            .audit_with_cwd(target, "{SERVER-CONTEXT}", QueryKind::Clsid, r"C:\working")
+            .unwrap();
+
+        assert_eq!(audit.status, "SERVER_DEPS_MISSING");
+        assert_eq!(audit.server.unwrap().failures[0].dll, "helper.dll");
     }
 
     #[test]
