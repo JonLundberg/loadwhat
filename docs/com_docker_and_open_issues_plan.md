@@ -73,7 +73,7 @@ Last updated: 2026-07-09 by Codex.
 | D5A | done | P0 | Codex | Add host-registry sentinel checks around container tests |
 | D6 | done | P1 | Codex | Add container tests for HKCU/HKLM override behavior |
 | D7 | done | P1 | Codex | Add container tests for x86/x64 registry views and WOW64 server paths |
-| D8 | in_progress | P1 | Codex | Add container tests for COM server dependency failures |
+| D8 | done | P1 | Codex | Add container tests for COM server dependency failures |
 | D9 | done | P1 | Codex | Document container workflow and cleanup expectations |
 | C1 | done | P1 | Codex | Fix `com audit` dependency walk target-context issue |
 | C2 | done | P2 | Codex | Fix HKCU-present broken value falling through to HKLM |
@@ -577,6 +577,16 @@ The full effort is complete when:
 - Ran `cargo xtask test-container` again after adding the WOW64 case; all 16
   container cases passed, including `System32` to `SysWOW64` validation. Host
   sentinels passed before and after the run.
+
+### 2026-07-09 - Codex transitive COM dependency coverage
+
+- Added a real three-DLL fixture chain where the COM server imports
+  `lwtest_b.dll` and that DLL imports an intentionally omitted `lwtest_c.dll`.
+- Added a container assertion for the deterministic transitive trace:
+  `COM_DEPENDENCY_STATUS status="MISSING" dll="lwtest_c.dll" via="lwtest_b.dll" depth=2`.
+- Ran `cargo xtask test-container`; all 17 container cases passed. Host registry
+  sentinels passed before and after the run. No host COM registry mutation was
+  performed.
 
 ### 2026-07-09 - Codex Windows container setup success
 

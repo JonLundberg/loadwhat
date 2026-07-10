@@ -68,6 +68,7 @@ fn cmd_test_container() -> Result<(), String> {
     )?;
     build_fixtures(&repo_root, &fixture_bin_root)?;
     build_com_fixtures(&repo_root, &fixture_bin_root)?;
+    build_com_transitive_fixtures(&repo_root, &fixture_bin_root)?;
     stage_container_context(&repo_root, &context_root, &fixture_bin_root)?;
 
     run_command(
@@ -152,6 +153,7 @@ fn stage_container_context(
 
     let healthy = context_root.join("fixtures/healthy");
     let broken = context_root.join("fixtures/broken");
+    let transitive = context_root.join("fixtures/transitive");
     let target = context_root.join("fixtures/target");
     let target_has_dep = context_root.join("fixtures/context/target_has_dep");
     let target_missing_dep = context_root.join("fixtures/context/target_missing_dep");
@@ -162,6 +164,8 @@ fn stage_container_context(
         .map_err(|e| format!("failed to create {}: {e}", healthy.display()))?;
     fs::create_dir_all(&broken)
         .map_err(|e| format!("failed to create {}: {e}", broken.display()))?;
+    fs::create_dir_all(&transitive)
+        .map_err(|e| format!("failed to create {}: {e}", transitive.display()))?;
     fs::create_dir_all(&target)
         .map_err(|e| format!("failed to create {}: {e}", target.display()))?;
     for directory in [
@@ -187,6 +191,14 @@ fn stage_container_context(
     copy_file(
         &fixture_bin_root.join("lwtest_a_v1.dll"),
         &broken.join("lwtest_com_server_dep_missing.dll"),
+    )?;
+    copy_file(
+        &fixture_bin_root.join("lwtest_a_v1.dll"),
+        &transitive.join("lwtest_com_server_dep_transitive.dll"),
+    )?;
+    copy_file(
+        &fixture_bin_root.join("lwtest_b_dep_missing.dll"),
+        &transitive.join("lwtest_b.dll"),
     )?;
     copy_file(
         &fixture_bin_root.join("host_echo_argv_cwd.exe"),
@@ -436,6 +448,40 @@ fn build_com_fixtures(repo_root: &Path, fixture_bin_root: &Path) -> Result<(), S
                 "/nologo",
                 "/verbosity:minimal",
                 "/t:Build",
+                &properties,
+            ],
+            Some(repo_root),
+            &[],
+        )?;
+    }
+    Ok(())
+}
+
+fn build_com_transitive_fixtures(repo_root: &Path, fixture_bin_root: &Path) -> Result<(), String> {
+    let msbuild = resolve_msbuild_program()?;
+    let msvc_root = repo_root.join("tests").join("fixtures").join("msvc");
+    let outdir = msbuild_outdir_value(fixture_bin_root);
+
+    for (project, properties) in [
+        (
+            "dll_lwtest_c/dll_lwtest_c.vcxproj",
+            format!("/p:Configuration=Release;Platform=x64;LWTEST_OUTDIR={outdir}"),
+        ),
+        (
+            "dll_lwtest_b/dll_lwtest_b.vcxproj",
+            format!(
+                "/p:Configuration=Release;Platform=x64;LWTEST_OUTDIR={outdir};LWTEST_B_DEPENDS_ON_C=1;TargetName=lwtest_b_dep_missing"
+            ),
+        ),
+    ] {
+        let project_path = msvc_root.join(project);
+        run_command(
+            &msbuild,
+            &[
+                project_path.to_string_lossy().as_ref(),
+                "/nologo",
+                "/verbosity:minimal",
+                "/t:Rebuild",
                 &properties,
             ],
             Some(repo_root),

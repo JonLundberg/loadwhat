@@ -71,6 +71,12 @@ Invoke-LoadWhatCase `
     -ExpectedExitCode 10 `
     -ExpectedSummaryPattern '^COM_SERVER .*status="SERVER_DEPS_MISSING" .*machine="x64"'
 
+Invoke-LoadWhatTraceCase `
+    -Name 'server-transitive-dependency-missing' `
+    -Arguments @('com', 'server', '--trace', 'C:\loadwhat\fixtures\transitive\lwtest_com_server_dep_transitive.dll') `
+    -ExpectedExitCode 10 `
+    -ExpectedLinePattern '^COM_DEPENDENCY_STATUS status="MISSING" dll="lwtest_c.dll" via="lwtest_b.dll" depth=2$'
+
 Invoke-LoadWhatCase `
     -Name 'audit-registry-fallback' `
     -Arguments @('com', 'audit', 'C:\loadwhat\fixtures\context\target_missing_dep\lwtest_com_target_x64.exe', '{7F4D0007-4C57-4A54-9000-000000000007}') `

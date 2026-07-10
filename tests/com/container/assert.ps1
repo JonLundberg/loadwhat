@@ -34,3 +34,22 @@ function Invoke-LoadWhatCase {
     }
     Write-Host "LWTEST:COM_CONTAINER PASS name=$Name"
 }
+
+function Invoke-LoadWhatTraceCase {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][string[]]$Arguments,
+        [Parameter(Mandatory = $true)][int]$ExpectedExitCode,
+        [Parameter(Mandatory = $true)][string]$ExpectedLinePattern
+    )
+
+    $lines = @(& 'C:\loadwhat\loadwhat.exe' @Arguments 2>&1 | ForEach-Object { "$_" })
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -ne $ExpectedExitCode) {
+        throw "${Name}: expected exit $ExpectedExitCode, got $exitCode.`n$($lines -join "`n")"
+    }
+    if (-not ($lines | Where-Object { $_ -match $ExpectedLinePattern })) {
+        throw "${Name}: no line matched $ExpectedLinePattern.`n$($lines -join "`n")"
+    }
+    Write-Host "LWTEST:COM_CONTAINER PASS name=$Name"
+}
