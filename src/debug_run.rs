@@ -10,6 +10,7 @@ use crate::{loader_snaps, win};
 
 const STATUS_BREAKPOINT: u32 = 0x8000_0003;
 const STATUS_SINGLE_STEP: u32 = 0x8000_0004;
+const TERMINATION_DRAIN_TIMEOUT_MS: u128 = 5_000;
 
 #[derive(Clone)]
 pub struct LoadedModule {
@@ -151,16 +152,35 @@ pub fn run_target(
     let mut saw_terminal_exception = false;
     let mut saw_exit = false;
     let mut timeout_hit = false;
+    let mut termination_started = None::<Instant>;
 
     loop {
         let elapsed = start.elapsed().as_millis();
-        if timeout_ms != 0 && elapsed >= timeout_ms as u128 {
+        if !timeout_hit && timeout_ms != 0 && elapsed >= timeout_ms as u128 {
+            let terminated = unsafe { win::TerminateProcess(pi.h_process, win::ERROR_SEM_TIMEOUT) };
+            if terminated == 0 {
+                let code = unsafe { win::GetLastError() };
+                close_if_needed(pi.h_thread);
+                close_if_needed(pi.h_process);
+                return Err(RunError::Message(format!(
+                    "TerminateProcess failed after timeout: 0x{code:08X}"
+                )));
+            }
             timeout_hit = true;
-            break;
+            termination_started = Some(Instant::now());
+        }
+        if termination_started
+            .is_some_and(|started| started.elapsed().as_millis() >= TERMINATION_DRAIN_TIMEOUT_MS)
+        {
+            close_if_needed(pi.h_thread);
+            close_if_needed(pi.h_process);
+            return Err(RunError::Message(
+                "timed-out target did not report process exit after termination".to_string(),
+            ));
         }
 
         let remaining = timeout_ms.saturating_sub(elapsed as u32);
-        let wait_ms = if timeout_ms == 0 {
+        let wait_ms = if timeout_ms == 0 || timeout_hit {
             250
         } else {
             remaining.min(250)
@@ -353,14 +373,14 @@ fn determine_end_kind(
     saw_terminal_exception: bool,
     timeout_hit: bool,
 ) -> RunEndKind {
-    if saw_exit {
+    if timeout_hit {
+        RunEndKind::Timeout
+    } else if saw_exit {
         if saw_terminal_exception {
             RunEndKind::Exception
         } else {
             RunEndKind::ExitProcess
         }
-    } else if timeout_hit {
-        RunEndKind::Timeout
     } else if saw_terminal_exception {
         RunEndKind::Exception
     } else {
@@ -597,6 +617,14 @@ mod tests {
     #[test]
     fn quote_cmd_arg_handles_backslashes_before_quotes() {
         assert_eq!(quote_cmd_arg(r#"a\"b"#), r#""a\\\"b""#);
+    }
+
+    #[test]
+    fn determine_end_kind_keeps_timeout_after_terminated_exit() {
+        assert!(matches!(
+            determine_end_kind(true, false, true),
+            RunEndKind::Timeout
+        ));
     }
 
     #[test]

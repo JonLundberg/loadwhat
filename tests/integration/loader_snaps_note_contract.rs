@@ -41,6 +41,13 @@ fn summary_mode_omits_terminal_loader_snaps_notes() {
     harness::assert::assert_not_timed_out(&result);
     harness::assert::assert_exit_code(&result, 21);
     assert!(
+        result
+            .stderr
+            .contains("loader-snaps enable failed: 0x00000005"),
+        "summary mode should explain the terminal setup failure on stderr.\n{}",
+        result.stderr
+    );
+    assert!(
         !result.stdout.contains(r#"topic="loader-snaps""#)
             && !result.stdout.contains(r#"detail="enable-failed""#),
         "summary mode should suppress loader-snaps terminal notes.\n{}",

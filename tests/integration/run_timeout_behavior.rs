@@ -92,8 +92,8 @@ fn verbose_mode_timeout_after_runtime_progress_reports_timeout_without_false_dia
         .find(|line| line.starts_with("RUN_END "))
         .expect("missing RUN_END");
     assert!(
-        run_end.contains(r#"exit_kind="TIMEOUT""#),
-        "expected timeout RUN_END.\n{}",
+        run_end.contains(r#"exit_kind="TIMEOUT""#) && run_end.contains("code=0x00000079"),
+        "expected timeout RUN_END with the termination exit code.\n{}",
         result.stdout
     );
     assert!(
@@ -103,6 +103,33 @@ fn verbose_mode_timeout_after_runtime_progress_reports_timeout_without_false_dia
                 || line.starts_with("FIRST_BREAK ")
         }),
         "timeout without a load diagnosis should not invent static/dynamic failures.\n{}",
+        result.stdout
+    );
+}
+
+#[test]
+fn zero_timeout_disables_deadline() {
+    let (paths, case, exe) = make_sleeping_echo_case("run_timeout_disabled");
+    let args = vec![
+        OsString::from("run"),
+        OsString::from("--timeout-ms"),
+        OsString::from("0"),
+        OsString::from("-v"),
+        harness::case::os(&exe),
+        OsString::from("--lwtest-sleep-ms"),
+        OsString::from("100"),
+    ];
+    let result =
+        harness::run_loadwhat::run_public(&paths, case.root(), &args, Duration::from_secs(20))
+            .expect("failed to run loadwhat");
+
+    harness::assert::assert_not_timed_out(&result);
+    harness::assert::assert_exit_code(&result, 0);
+    assert!(
+        token_lines(&result.stdout).iter().any(
+            |line| line.starts_with("RUN_END ") && line.contains(r#"exit_kind="EXIT_PROCESS""#)
+        ),
+        "zero timeout should wait for the target's normal exit.\n{}",
         result.stdout
     );
 }

@@ -20,6 +20,8 @@ loadwhat com audit [OPTIONS] <TARGET> <{CLSID}|PROGID>
 - All `run` options must appear before `<TARGET>`.
 - Everything after `<TARGET>` is passed directly to the target process.
 - Loader-snaps is enabled by default; use `--no-loader-snaps` to disable it.
+- `--timeout-ms 0` disables the runtime deadline; a nonzero timeout explicitly
+  terminates the target when it expires.
 - Summary output is the default; use `--trace` or `-v` for detail.
 
 ## COM diagnosis
@@ -57,7 +59,8 @@ target\release\loadwhat.exe
 - Default `run` mode is summary:
   - emits exactly one line for first-break diagnosis (`STATIC_MISSING`, `STATIC_BAD_IMAGE`, or `DYNAMIC_MISSING`)
   - emits `SUCCESS status=0` when startup succeeds, or when a timeout occurs after runtime module-load progress, without a diagnosed load issue
-  - a non-diagnostic timeout before meaningful runtime progress currently exits `21` with no public token output. If the program starts and nothing happens, at some point we have to call it.
+  - a non-diagnostic failure exits nonzero without a public stdout token and
+    writes a deterministic explanation to stderr
 - `--trace` enables detailed diagnostic trace output (`SEARCH_ORDER`, `SEARCH_PATH`, and related diagnosis lines).
 - `-v`/`--verbose` enables verbose runtime detail and also enables trace, unless a later `--summary` switches back to summary mode.
 - Later flags win per dimension: `--trace` vs `--summary`, `-v`/`--verbose` vs `--quiet`, and `--loader-snaps` vs `--no-loader-snaps`.
@@ -69,9 +72,30 @@ target\release\loadwhat.exe
 `run` Phase B performs direct import diagnosis and an always-on recursive missing-dependency walk (transitive missing detection).
 
 By default, `loadwhat` enables loader-snaps Phase C and can heuristically infer handled dynamic `LoadLibrary*` failures from loader-snaps debug strings and emit `DYNAMIC_MISSING`. Use `--no-loader-snaps` to disable that phase. When multiple dynamic-failure candidates are observed in one run, `loadwhat` prefers the earliest unresolved app-relevant failure and ignores candidates for DLLs that later load successfully. See `docs/loadwhat_spec_v1.md` for the authoritative selection rules.
-Loader-snaps setup uses best-effort `PEB->NtGlobalFlag` enable with Windows version/build detection to pick the x64 offset.
+Loader-snaps setup uses best-effort process-local `PEB->NtGlobalFlag` enable
+with the documented x64 offset.
 Summary mode omits loader-snaps setup and restore notes. Trace mode may emit terminal setup/restore diagnostics, and verbose mode may emit additional fallback-detail notes such as `peb-enable-failed`.
 Phase C currently has no separate post-startup suppression boundary in v1; delayed dynamic load failures can still be diagnosed if they remain the highest-ranked unresolved candidate.
+
+## Loader-snaps registry fallback safety
+
+The preferred loader-snaps path modifies only the debugged process's PEB and
+does not write the registry. If that path fails, loadwhat falls back to the
+machine-wide IFEO value at:
+
+```text
+HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\<ImageName>\GlobalFlag
+```
+
+The fallback normally preserves and restores the prior value, but restoration
+is best effort. An abrupt termination, including Ctrl+C, forced process
+termination, power loss, or a release-build panic, can leave the value changed.
+It may also require administrator permission. Use `--no-loader-snaps` when
+machine-wide registry mutation is unacceptable.
+
+If a run is interrupted after IFEO fallback, inspect the exact image-specific
+`GlobalFlag` value as an administrator. Do not delete or overwrite it unless
+you know what value existed before the run; it may predate loadwhat.
 
 ## Token style
 

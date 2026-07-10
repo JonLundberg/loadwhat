@@ -140,6 +140,11 @@ from `docs/loadwhat_spec_v1.md`.
 ## P1 — Correctness / user-visible behavior
 
 ### 1. Default (summary) mode is silent on several failure paths
+**Status:** Resolved 2026-07-09 without changing the stdout token contract.
+Non-diagnostic nonzero exits, non-loader exceptions, early timeouts, and
+loader-snaps setup failures now write deterministic stderr explanations.
+Fixture tests cover a clean exit code and a real unhandled access violation.
+
 **Where:** `run_command`, `src/main.rs` (summary emission at ~line 510).
 **Problem:** In summary mode a line is printed only when a diagnosis is found or
 `code == 0`. These cases print **nothing** and exit non-zero:
@@ -164,6 +169,11 @@ command line. `loadwhat run app.exe "" next` makes the target see shifted argv.
 **Tests:** Extend `build_command_line_*` unit tests with an empty-arg case.
 
 ### 3. IFEO loader-snaps state can leak permanently
+**Status:** Risk documented 2026-07-09. `README.md` now distinguishes the
+process-local PEB path from the machine-wide IFEO fallback, describes abrupt
+termination risk, and directs registry-intolerant users to
+`--no-loader-snaps`. A console-control restore handler is not implemented.
+
 **Where:** `LoaderSnapsGuard` / `Drop`, `src/loader_snaps.rs:102`; `Cargo.toml:27`.
 **Problem:** The IFEO fallback writes machine-wide `GlobalFlag` under HKLM Image
 File Execution Options for the image name. Restoration relies on `Drop`, but
@@ -204,6 +214,11 @@ digit (i.e. require exactly a u32-width token).
 **Tests:** Add a unit case with a 16-digit address preceding a real status code.
 
 ### 7. Debuggee keeps running after timeout
+**Status:** Resolved 2026-07-09. A nonzero deadline now calls
+`TerminateProcess`, drains the resulting exit debug event, and retains
+`TIMEOUT` as the observed end kind. `--timeout-ms 0` is documented and tested
+as disabling the deadline.
+
 **Where:** debug loop, `src/debug_run.rs:157` (break on timeout).
 **Problem:** On timeout the loop breaks without terminating the target; it only
 dies when loadwhat exits. Phase B/C static diagnosis then races a live process.
@@ -227,6 +242,11 @@ dirs (e.g. `C:\Program Files\Common Files`). Rename to reflect "app-relevant" or
 tighten the predicate to actually mean app-local.
 
 ### 10. Nearly all timeouts report `SUCCESS`
+**Status:** Deliberately retained for v1 compatibility on 2026-07-09. The
+authoritative v1 contract requires the existing success-like timeout result.
+A distinct timeout token would expand the public token family, so that behavior
+is tracked in `docs/roadmap.md` rather than changed under this plan.
+
 **Where:** `run_result_code` timeout branch, `src/main.rs:989`. Because every
 process loads ntdll within milliseconds, `Timeout && !loaded_modules.is_empty()`
 is almost always true, so a hung app that never finished startup emits

@@ -1,6 +1,6 @@
 # COM Docker Test Framework and Open Issues Plan
 
-Status: active work plan.
+Status: complete.
 
 Primary instruction for agents: follow this plan in order. The Docker-based COM test framework is the priority lane because it protects the developer's host registry and creates the safest place to verify COM behavior. Do not make broad COM behavior changes before the container test lane is scaffolded, unless a step below explicitly allows it.
 
@@ -45,9 +45,10 @@ Last updated: 2026-07-09 by Codex.
 - v2 is now the top-level authoritative spec.
 - v1 remains incorporated for `run` and `imports`.
 - COM implementation exists on `main`.
-- COM tests are mostly mock/unit tests.
-- Existing `cargo test` passed with 264 tests.
-- Existing `cargo xtask test` passed during review with 99 integration tests.
+- COM coverage now combines mock/unit tests, fixture-backed CLI tests, and real
+  registry tests in a Hyper-V-isolated Windows container.
+- Current `cargo test --locked` passes with 271 tests.
+- Current `cargo xtask test` passes with 106 integration tests.
 - Docker/container COM testing is implemented with guarded registry fixtures,
   real x64/x86 PEs, Hyper-V isolation, and host sentinel checks.
 - Recent review findings are recorded in `docs/code_review_findings.md`.
@@ -79,12 +80,12 @@ Last updated: 2026-07-09 by Codex.
 | C2 | done | P2 | Codex | Fix HKCU-present broken value falling through to HKLM |
 | C3 | done | P2 | Codex | Decide and fix COM indeterminate-error token contract |
 | C4 | done | P3 | Codex | Add fixture-backed non-container COM CLI tests |
-| C5 | in_progress | P3 | Codex | Clean up COM docs after behavior fixes |
-| V1-1 | todo | P2 | unassigned | Address summary-mode silent failure paths |
+| C5 | done | P3 | Codex | Clean up COM docs after behavior fixes |
+| V1-1 | done | P2 | Codex | Address summary-mode silent failure paths |
 | V1-2 | done | P2 | Codex | Preserve empty target arguments |
 | V1-3 | done | P2 | Codex | Gate `LOADWHAT_TEST_MODE` out of release builds |
-| V1-4 | todo | P3 | unassigned | Document or harden IFEO cleanup risk |
-| V1-5 | todo | P3 | unassigned | Fix timeout process cleanup / timeout semantics |
+| V1-4 | done | P3 | Codex | Document or harden IFEO cleanup risk |
+| V1-5 | done | P3 | Codex | Fix timeout process cleanup / timeout semantics |
 
 ## Registry Safety Contract
 
@@ -600,6 +601,36 @@ The full effort is complete when:
 - Ran the release binary with `LOADWHAT_TEST_MODE=1`; it emitted no `LWTEST:`
   lines and returned the normal `SUCCESS status=0` contract.
 
+### 2026-07-09 - Codex remaining v1 fixes and documentation cleanup
+
+- V1-1: added deterministic stderr explanations for summary-mode failures that
+  intentionally have no public stdout diagnosis token. Added fixture coverage
+  for exit code 42, an unhandled access violation, and IFEO setup failure.
+- V1-5: nonzero timeouts now call `TerminateProcess` and drain the exit debug
+  event before diagnosis continues. Documented and tested that
+  `--timeout-ms 0` disables the deadline.
+- Preserved the v1-authoritative success-like timeout stdout contract. A
+  distinct timeout token is now a roadmap item because it would expand the
+  public token family.
+- V1-4: documented the machine-wide IFEO fallback, best-effort restoration,
+  abrupt termination risk, and the `--no-loader-snaps` avoidance path.
+- C5: synchronized the v1 spec, README, testing notes, COM strategy, roadmap,
+  and review status. Marked the old unguarded container snippets as historical
+  examples that must not be run.
+- Ran `cargo test --locked`; passed with 271 tests.
+- Ran `cargo xtask test`; passed with 106 integration tests.
+- Ran `cargo clippy --workspace --all-targets --locked -- -D warnings`;
+  passed.
+- Ran `cargo xtask test-container`; all 17 container cases passed and the
+  read-only host registry sentinels passed before and after the container.
+- Ran `cargo build --release --locked`; passed.
+- Ran release acceptance checks for `--help`, `imports` on
+  `C:\Windows\System32\notepad.exe`, `run --no-loader-snaps --timeout-ms 500`
+  on Notepad, and read-only `com progid Shell.Application`; all passed.
+- Rechecked the release test-mode gate with `LOADWHAT_TEST_MODE=1`; no
+  `LWTEST:` output was emitted.
+- No host COM registry mutation was performed.
+
 ### 2026-07-09 - Codex Windows container setup success
 
 - User enabled Windows optional features from elevated PowerShell:
@@ -640,6 +671,18 @@ Local `cargo test` and `cargo xtask test` must not mutate real host COM registry
 Registry fixture scripts must fail closed when invoked outside the container
 test environment. The runner must not rely only on agent discipline or file
 location to protect the host registry.
+
+### 2026-07-09 - Preserve the v1 timeout token contract
+
+Timeout cleanup is corrected without adding a new public token. A timeout after
+runtime module-load progress continues to emit `SUCCESS status=0` as required
+by the authoritative v1 contract. A distinct timeout result is roadmap work.
+
+### 2026-07-09 - Explain non-diagnostic failures on stderr
+
+Summary-mode stdout remains restricted to the four v1 token families.
+Failures without a truthful DLL diagnosis use deterministic stderr text so
+they are no longer silent and do not fabricate a diagnosis token.
 
 ## Blocked Items
 

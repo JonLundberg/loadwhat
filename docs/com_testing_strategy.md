@@ -611,6 +611,19 @@ invoked by the host runner.
 
 #### Docker setup
 
+The checked-in implementation is authoritative:
+
+- `tests/com/container/Dockerfile`
+- `tests/com/container/setup_registry.ps1`
+- `tests/com/container/run_container_tests.ps1`
+- `xtask/src/main.rs`
+
+The historical sketches below are retained as design background only. **Do not
+run them on the host.** They omit the fail-closed container guards and fixed
+registry roots required by the implemented framework. Use only
+`cargo xtask test-container`, which invokes the guarded setup script inside a
+Hyper-V-isolated container.
+
 ```dockerfile
 FROM mcr.microsoft.com/windows/servercore:ltsc2022
 
@@ -630,7 +643,8 @@ ENTRYPOINT ["powershell", "-File", "C:/tests/run_container_tests.ps1"]
 **What works well:**
 
 - Registry isolation is real. Each Windows container has its own `HKLM` and `HKCU`. Tests can create, modify, and destroy COM registrations freely without affecting the host.
-- PE execution works. The Windows kernel is shared (in process-isolation mode), so `CreateProcessW`, `WaitForDebugEvent`, `ReadProcessMemory`, and other Win32 debug APIs function normally.
+- PE execution and Win32 debug APIs work in the implemented Hyper-V-isolated
+  Server Core test container.
 - Loader-snaps should work. `NtGlobalFlag` manipulation targets the PEB of the debugged process, which is a per-process structure.
 - IFEO registry writes are container-local, so the loader-snaps fallback path can be tested safely.
 
@@ -646,7 +660,7 @@ ENTRYPOINT ["powershell", "-File", "C:/tests/run_container_tests.ps1"]
 - **Nano Server images** do not include the Win32 subsystem, COM runtime, or debug APIs.
 - **Linux containers** are not an option for Win32 API testing.
 
-#### Registry fixture script
+#### Historical registry fixture sketch (do not run)
 
 ```powershell
 # tests/com/container/setup_fixtures.ps1
@@ -744,7 +758,7 @@ $acl.AddAccessRule($rule)
 Set-Acl -Path "HKLM:\Software\Classes\CLSID\$clsid_denied" -AclObject $acl
 ```
 
-#### Container test runner
+#### Historical container runner sketch (do not run)
 
 ```powershell
 # tests/com/container/run_container_tests.ps1

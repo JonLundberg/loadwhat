@@ -21,6 +21,7 @@ loadwhat run [OPTIONS] <TARGET> [TARGET_ARGS...]
 - Run options must appear before `<TARGET>`.
 - `<TARGET>` is the first positional argument after `run`.
 - All arguments after `<TARGET>` are passed unchanged to the target process.
+- `--timeout-ms 0` disables the deadline and waits until the target exits.
 - Loader-snaps Phase C is enabled by default; use `--no-loader-snaps` to disable it.
 - Options are applied left-to-right until `<TARGET>` is reached.
 - Later flags win per dimension:
@@ -61,7 +62,10 @@ Roadmap-only features are documented in `docs/roadmap.md` and are not part of th
 - Summary mode emits exactly one token line for `run` when `loadwhat` reaches a public diagnosis or success-like completion:
   - `STATIC_MISSING ...`, `STATIC_BAD_IMAGE ...`, or `DYNAMIC_MISSING ...` when a first break is diagnosed
   - `SUCCESS status=0` when startup succeeds, or when a timeout occurs after runtime module-load progress, and no load issue is diagnosed
-- A non-diagnostic failure such as a timeout before meaningful runtime progress may exit `21` with no public token output.
+- A non-diagnostic failure such as a nonzero target exit, a non-loader
+  exception, loader-snaps setup failure, or timeout before meaningful runtime
+  progress exits nonzero without a public stdout token and writes a
+  deterministic explanation to stderr.
 - Summary mode suppresses trace-style token lines (`SEARCH_ORDER`, `SEARCH_PATH`, `NOTE`, runtime timeline tokens).
 - `--trace` enables detailed diagnostic trace output.
 - `-v` or `--verbose` enables verbose runtime event output (`RUN_START`, `RUNTIME_LOADED`, `DEBUG_STRING`, `RUN_END`) and extended static diagnosis output (`STATIC_*`, `SEARCH_*`, `FIRST_BREAK`, `SUMMARY`).
@@ -76,6 +80,10 @@ Roadmap-only features are documented in `docs/roadmap.md` and are not part of th
 - Run debug loop with `WaitForDebugEvent` and `ContinueDebugEvent`.
 - Capture `LOAD_DLL_DEBUG_EVENT` and `OUTPUT_DEBUG_STRING_EVENT`.
 - Track termination via `EXIT_PROCESS_DEBUG_EVENT` and terminal `EXCEPTION_DEBUG_EVENT`.
+- When a nonzero timeout expires, call `TerminateProcess` and continue the
+  debug loop until the target's `EXIT_PROCESS_DEBUG_EVENT` is drained. Preserve
+  `TIMEOUT` as the observed end kind. A timeout value of `0` disables this
+  deadline.
 
 ### Phase B: direct static import diagnosis
 
@@ -186,7 +194,11 @@ When loader-snaps is enabled (the default for `run`; disable with `--no-loader-s
    `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\<ImageName>\GlobalFlag`
    and restore original value afterward.
 
-Restoration is best effort for all terminal paths.
+Restoration is best effort for all normal terminal paths. The fallback changes
+machine-wide IFEO state and an abrupt debugger termination (for example,
+`TerminateProcess`, power loss, or a release-build panic) can prevent
+restoration. Operators that cannot accept this risk must use
+`--no-loader-snaps`; see the registry safety section in `README.md`.
 
 ### Determining `PEB->NtGlobalFlag` address (v1)
 
@@ -206,7 +218,8 @@ Restoration is best effort for all terminal paths.
 
 Failure behavior:
 
-- Summary mode omits loader-snaps setup and restore notes.
+- Summary mode omits loader-snaps setup and restore `NOTE` tokens. A terminal
+  setup failure still writes a deterministic explanation to stderr.
 - Trace mode may emit terminal setup/restore diagnostics such as `enable-failed`, `restore-failed`, and `wow64-target-unsupported`.
 - Verbose mode may additionally emit fallback-detail notes such as `peb-enable-failed`.
 
@@ -324,7 +337,9 @@ Required token families in v1:
 - `0` = no issues detected, including the current success-like timeout path after runtime module-load progress
 - `10` = missing/bad image issue detected (`run` static/dynamic diagnosis or `imports`)
 - `20` = usage error
-- `21` = cannot launch/debug target, or non-diagnostic failure without a public diagnosis token (including loader-snaps setup failure and timeout before meaningful runtime progress)
+- `21` = cannot launch/debug target, or non-diagnostic failure without a public
+  diagnosis token (including loader-snaps setup failure and timeout before
+  meaningful runtime progress); these paths write an explanation to stderr
 - `22` = unsupported architecture
 
 ## 8) Constraints

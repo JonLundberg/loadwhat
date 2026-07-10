@@ -6,6 +6,7 @@
 int wmain(int argc, wchar_t* argv[]) {
     DWORD sleep_ms = 0;
     int forced_exit_code = 0;
+    bool crash_after_output = false;
     std::vector<wchar_t*> passthrough_args;
 
     for (int i = 1; i < argc; ++i) {
@@ -15,6 +16,10 @@ int wmain(int argc, wchar_t* argv[]) {
         }
         if (wcscmp(argv[i], L"--lwtest-exit-code") == 0 && i + 1 < argc) {
             forced_exit_code = _wtoi(argv[++i]);
+            continue;
+        }
+        if (wcscmp(argv[i], L"--lwtest-crash") == 0) {
+            crash_after_output = true;
             continue;
         }
         passthrough_args.push_back(argv[i]);
@@ -42,6 +47,9 @@ int wmain(int argc, wchar_t* argv[]) {
     fflush(stdout);
     if (sleep_ms != 0) {
         Sleep(sleep_ms);
+    }
+    if (crash_after_output) {
+        RaiseException(EXCEPTION_ACCESS_VIOLATION, EXCEPTION_NONCONTINUABLE, 0, nullptr);
     }
 
     return forced_exit_code;

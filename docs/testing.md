@@ -113,4 +113,7 @@ loadwhat run [OPTIONS] <TARGET> [TARGET_ARGS...]
 - Tests that assert trace lines (`SEARCH_ORDER`, `SEARCH_PATH`, runtime timeline tokens, or loader-snaps notes) must pass `--trace` or `-v`.
 - The current timeout contract is explicit in tests and docs:
   - timeout after runtime module-load progress returns `0`; summary mode emits `SUCCESS status=0`
-  - timeout before meaningful runtime progress returns `21` with no public summary token
+  - timeout before meaningful runtime progress returns `21`, emits no public
+    summary token, and explains the failure on stderr
+  - a nonzero timeout explicitly terminates the target and drains its exit
+    debug event; `--timeout-ms 0` disables the deadline

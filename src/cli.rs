@@ -376,7 +376,7 @@ pub fn usage() -> String {
     out.push_str("  loadwhat help\n");
     out.push_str("\nRun options:\n");
     out.push_str("  --cwd <path>      Working directory for target process\n");
-    out.push_str("  --timeout-ms <ms> Maximum runtime before termination\n");
+    out.push_str("  --timeout-ms <ms> Maximum runtime before termination; 0 disables deadline\n");
     out.push_str("  --trace           Print diagnostic trace output\n");
     out.push_str("  --summary         Print summary output (default)\n");
     out.push_str("  -v, --verbose     Print detailed diagnostic output\n");

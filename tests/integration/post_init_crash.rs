@@ -51,10 +51,57 @@ fn run_non_loader_high_exit_code_does_not_diagnose_dll() {
     harness::assert::assert_not_timed_out(&result);
     harness::assert::assert_exit_code(&result, 21);
     assert!(
+        result
+            .stderr
+            .contains("target exited with status 0x0000002A without a diagnosed DLL load failure"),
+        "expected a deterministic summary-mode error.\n{}",
+        result.stderr
+    );
+    assert!(
         !token_lines(&result.stdout)
             .iter()
             .any(|line| { line.starts_with("STATIC_") || line.starts_with("DYNAMIC_") }),
         "non-loader exit code should not produce false DLL diagnoses.\n{}",
+        result.stdout
+    );
+}
+
+#[test]
+fn run_unhandled_access_violation_reports_non_diagnostic_failure() {
+    let paths = harness::paths::require_from_env();
+    let case = harness::case::TestCase::new(&paths, "post_init_access_violation")
+        .expect("failed to initialize test case");
+    case.mkdir("app").expect("failed to create app directory");
+    let exe = case
+        .copy_fixture(
+            harness::fixture::HOST_ECHO_ARGV_CWD_EXE,
+            "app\\host_echo_argv_cwd.exe",
+        )
+        .expect("failed to copy echo fixture");
+
+    let args = vec![
+        OsString::from("run"),
+        harness::case::os(&exe),
+        OsString::from("--lwtest-crash"),
+    ];
+    let result =
+        harness::run_loadwhat::run_public(&paths, case.root(), &args, Duration::from_secs(20))
+            .expect("failed to run loadwhat");
+
+    harness::assert::assert_not_timed_out(&result);
+    harness::assert::assert_exit_code(&result, 21);
+    assert!(
+        result.stderr.contains(
+            "target terminated with exception 0xC0000005 without a diagnosed DLL load failure"
+        ),
+        "expected a deterministic exception diagnostic.\n{}",
+        result.stderr
+    );
+    assert!(
+        !token_lines(&result.stdout)
+            .iter()
+            .any(|line| { line.starts_with("STATIC_") || line.starts_with("DYNAMIC_") }),
+        "non-loader exception should not produce false DLL diagnoses.\n{}",
         result.stdout
     );
 }

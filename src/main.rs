@@ -120,6 +120,7 @@ fn run_command(opts: RunOptions) -> i32 {
                 let guard = match LoaderSnapsGuard::enable_for_image(&image_name) {
                     Ok(guard) => guard,
                     Err(code) => {
+                        eprintln!("loader-snaps enable failed: 0x{code:08X}");
                         if trace_mode {
                             emit(
                                 TOKEN_NOTE,
@@ -527,6 +528,8 @@ fn run_command(opts: RunOptions) -> i32 {
 
     if summary_mode && !summary_line_emitted && code == 0 {
         emit(TOKEN_SUCCESS, &[field("status", "0")]);
+    } else if summary_mode && !summary_line_emitted {
+        emit_non_diagnostic_run_error(&outcome);
     }
 
     code
@@ -1593,6 +1596,23 @@ fn run_result_code(outcome: &RunOutcome, diagnosis_count: usize) -> i32 {
         RunEndKind::ExitProcess if outcome.exit_code == Some(0) => 0,
         RunEndKind::Timeout if !outcome.loaded_modules.is_empty() => 0,
         RunEndKind::ExitProcess | RunEndKind::Exception | RunEndKind::Timeout => 21,
+    }
+}
+
+#[cfg(windows)]
+fn emit_non_diagnostic_run_error(outcome: &RunOutcome) {
+    match outcome.end_kind {
+        RunEndKind::ExitProcess => eprintln!(
+            "target exited with status {} without a diagnosed DLL load failure",
+            hex_u32(outcome.exit_code.unwrap_or(0))
+        ),
+        RunEndKind::Exception => eprintln!(
+            "target terminated with exception {} without a diagnosed DLL load failure",
+            hex_u32(outcome.exception_code.or(outcome.exit_code).unwrap_or(0))
+        ),
+        RunEndKind::Timeout => {
+            eprintln!("target timed out before meaningful runtime progress")
+        }
     }
 }
 

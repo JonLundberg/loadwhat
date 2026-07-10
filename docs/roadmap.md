@@ -25,6 +25,8 @@ Authoritative current behavior is defined by `docs/loadwhat_spec_v2.md`.
 - environment injection option (`--env KEY=VALUE`)
 - stricter/warning policy mode (`--strict`)
 - quiet output mode (`--quiet`)
+- a distinct public timeout result that replaces the v1 compatibility behavior
+  of `SUCCESS status=0` after runtime module-load progress
 - WOW64 target support (32-bit process on 64-bit Windows):
   - parse x86 PE imports and resolve with the same v1 search order
   - support loader-snaps enable via PEB32 and/or correct IFEO handling
