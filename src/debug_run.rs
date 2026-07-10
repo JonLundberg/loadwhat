@@ -411,7 +411,7 @@ fn build_command_line(exe_path: &Path, exe_args: &[OsString]) -> String {
 }
 
 fn quote_cmd_arg(arg: &str) -> String {
-    if !arg.contains([' ', '\t', '"']) {
+    if !arg.is_empty() && !arg.contains([' ', '\t', '"']) {
         return arg.to_string();
     }
 
@@ -580,6 +580,11 @@ mod tests {
     }
 
     #[test]
+    fn quote_cmd_arg_preserves_empty_arg() {
+        assert_eq!(quote_cmd_arg(""), r#""""#);
+    }
+
+    #[test]
     fn quote_cmd_arg_quotes_spaces() {
         assert_eq!(quote_cmd_arg("two words"), r#""two words""#);
     }
@@ -599,13 +604,14 @@ mod tests {
         let exe = PathBuf::from(r"C:\Program Files\App\tool.exe");
         let args = vec![
             OsString::from("--flag"),
+            OsString::from(""),
             OsString::from("two words"),
             OsString::from(r#"a"b"#),
         ];
 
         assert_eq!(
             build_command_line(&exe, &args),
-            r#""C:\Program Files\App\tool.exe" --flag "two words" "a\"b""#
+            r#""C:\Program Files\App\tool.exe" --flag "" "two words" "a\"b""#
         );
     }
 

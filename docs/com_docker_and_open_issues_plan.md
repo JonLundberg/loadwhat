@@ -81,8 +81,8 @@ Last updated: 2026-07-09 by Codex.
 | C4 | done | P3 | Codex | Add fixture-backed non-container COM CLI tests |
 | C5 | in_progress | P3 | Codex | Clean up COM docs after behavior fixes |
 | V1-1 | todo | P2 | unassigned | Address summary-mode silent failure paths |
-| V1-2 | todo | P2 | unassigned | Preserve empty target arguments |
-| V1-3 | todo | P2 | unassigned | Gate `LOADWHAT_TEST_MODE` out of release builds |
+| V1-2 | done | P2 | Codex | Preserve empty target arguments |
+| V1-3 | done | P2 | Codex | Gate `LOADWHAT_TEST_MODE` out of release builds |
 | V1-4 | todo | P3 | unassigned | Document or harden IFEO cleanup risk |
 | V1-5 | todo | P3 | unassigned | Fix timeout process cleanup / timeout semantics |
 
@@ -587,6 +587,18 @@ The full effort is complete when:
 - Ran `cargo xtask test-container`; all 17 container cases passed. Host registry
   sentinels passed before and after the run. No host COM registry mutation was
   performed.
+
+### 2026-07-09 - Codex narrow v1 correctness fixes
+
+- V1-2: fixed Windows command-line quoting so an empty target argument is
+  preserved as `""`; added unit and real argv fixture coverage.
+- V1-3: compiled `LOADWHAT_TEST_MODE` handling out of release builds while
+  retaining it for the debug harness.
+- Ran `cargo test --locked`; passed with 270 tests.
+- Ran `cargo xtask test`; passed with 104 integration tests.
+- Ran `cargo build --release --locked`; passed.
+- Ran the release binary with `LOADWHAT_TEST_MODE=1`; it emitted no `LWTEST:`
+  lines and returned the normal `SUCCESS status=0` contract.
 
 ### 2026-07-09 - Codex Windows container setup success
 

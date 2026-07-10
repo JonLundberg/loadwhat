@@ -1640,11 +1640,16 @@ fn normalize_existing_run_target(path: &Path) -> Result<PathBuf, String> {
     Err(format!("path does not exist: {}", path.display()))
 }
 
-#[cfg(windows)]
+#[cfg(all(windows, debug_assertions))]
 fn test_mode_enabled() -> bool {
     env::var("LOADWHAT_TEST_MODE")
         .map(|v| v.trim() == "1")
         .unwrap_or(false)
+}
+
+#[cfg(all(windows, not(debug_assertions)))]
+fn test_mode_enabled() -> bool {
+    false
 }
 
 #[cfg(windows)]

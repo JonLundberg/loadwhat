@@ -154,6 +154,9 @@ failure. Update `README.md` accordingly.
 clean-nonzero-exit target and a crashing-in-main target.
 
 ### 2. Empty target arguments are dropped
+**Status:** Resolved 2026-07-09. Empty target arguments are encoded as `""` in
+the Windows command line, with unit and fixture-backed argv coverage.
+
 **Where:** `quote_cmd_arg`, `src/debug_run.rs:413`.
 **Problem:** An empty string arg returns unquoted, so it vanishes from the built
 command line. `loadwhat run app.exe "" next` makes the target see shifted argv.
@@ -172,6 +175,10 @@ console-control handler that runs restore before exit; consider whether the
 release `panic = "abort"` is worth the lost cleanup.
 
 ### 4. `LOADWHAT_TEST_MODE` is active in release builds
+**Status:** Resolved 2026-07-09. Test mode is compiled in only when
+`debug_assertions` is enabled. A release build was verified with the environment
+variable set and emitted no `LWTEST:` lines.
+
 **Where:** `test_mode_enabled`, `src/main.rs:1039`.
 **Problem:** Every other test hook is gated behind `#[cfg(debug_assertions)]`, but
 this one is not. A production binary with the env var set emits `LWTEST:` lines and

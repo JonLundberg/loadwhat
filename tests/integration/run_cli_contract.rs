@@ -47,9 +47,10 @@ fn parse_echo_observation(stdout: &str) -> EchoObservation {
             continue;
         }
         if let Some(rest) = line.strip_prefix("HOST_ARG[") {
-            let Some((index, value)) = rest.split_once("]: ") else {
+            let Some((index, value)) = rest.split_once("]:") else {
                 panic!("invalid HOST_ARG line: {line}");
             };
+            let value = value.strip_prefix(' ').unwrap_or(value);
             let index = index
                 .parse::<usize>()
                 .unwrap_or_else(|_| panic!("invalid HOST_ARG index: {line}"));
@@ -316,6 +317,27 @@ fn group_a_mixed_options_preserve_target_args() {
         "--trace should suppress summary-only success output.\n{}",
         result.stdout
     );
+}
+
+#[test]
+fn group_a_empty_target_arg_is_preserved() {
+    let paths = harness::paths::require_from_env();
+    let (_case, exe, launch_dir) = make_echo_case(&paths, "run_cli_contract_a9");
+    let args = vec![
+        OsString::from("run"),
+        harness::case::os(&exe),
+        OsString::from("before"),
+        OsString::from(""),
+        OsString::from("after"),
+    ];
+    let result =
+        harness::run_loadwhat::run_public(&paths, &launch_dir, &args, Duration::from_secs(20))
+            .expect("failed to run loadwhat");
+
+    harness::assert::assert_not_timed_out(&result);
+    harness::assert::assert_exit_code(&result, 0);
+    let observation = parse_echo_observation(&result.stdout);
+    assert_eq!(observation.args, vec!["before", "", "after"]);
 }
 
 #[test]
