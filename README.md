@@ -147,6 +147,16 @@ Diagnose COM registrations:
 .\target\release\loadwhat.exe com audit C:\path\to\myapp.exe Vendor.Widget
 ```
 
+Registry-backed COM integration tests run in a Hyper-V-isolated Windows
+container so their HKCU/HKLM registrations do not modify the host registry:
+
+```powershell
+cargo xtask test-container
+```
+
+See `docs/windows_docker_container_setup.md` for prerequisites and
+`docs/testing.md` for the safety controls.
+
 ## Docs
 
 - Authoritative behavior spec: `docs/loadwhat_spec_v2.md`

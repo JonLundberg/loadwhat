@@ -12,11 +12,11 @@ Authoritative current behavior is defined by `docs/loadwhat_spec_v2.md`.
   - `com server <path>`
   - `com audit <target> <{CLSID}|ProgID>`
   - target-scoped registration-free COM manifest handling for `com audit`
+  - fixture-backed and Hyper-V-isolated Windows container test coverage for
+    real HKCU/HKLM and 32/64-bit registry views
 
 ## Not implemented (candidate future work)
 
-- COM fixture-backed (Tier 2) and container-based (Tier 3) test coverage
-  per `docs/com_testing_strategy.md`; current coverage is Tier 1 mock-based
 - Post-V2 candidate COM work:
   - `run --com` enrichment
   - `imports --com` enrichment

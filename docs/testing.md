@@ -7,6 +7,7 @@ This repository uses an `xtask` harness to build native fixtures and run integra
 Windows workflow:
 
 - `cargo xtask test`
+- `cargo xtask test-container` for real COM registry integration tests
 
 Plain `cargo test` and `cargo test --tests` run the default test set without the harness-backed integration suite. The fixture-backed integration suite is gated behind the `harness-tests` feature and is driven by `cargo xtask test`.
 
@@ -16,6 +17,34 @@ High-level behavior:
 2. creates `target/loadwhat-tests/fixtures/bin/`
 3. builds MSVC fixtures via MSBuild
 4. runs `cargo test --tests --features harness-tests` with harness environment set
+
+## COM container tests
+
+Run the registry-backed COM suite only when Docker is using Windows containers:
+
+```powershell
+cargo xtask test-container
+```
+
+The command builds a statically linked release executable, builds x64 and x86
+MSVC fixtures, stages a Docker context under
+`target/loadwhat-container-tests/`, builds a Windows Server Core image, and
+runs the test script with Hyper-V isolation.
+
+Registry safety is enforced in two places:
+
+- The host runner performs read-only Win32 sentinel checks before and after the
+  container. It never creates, updates, or deletes host registry keys.
+- The registry setup script requires the image marker, Windows
+  `ContainerType=2`, and `C:\WcSandboxState` before it writes any keys.
+
+All COM fixture registrations are created inside the disposable container.
+The scripts use fixed test CLSIDs and fixed HKCU/HKLM `Software\Classes` roots;
+they do not accept a registry root from the caller. A failing host sentinel
+aborts without deleting anything.
+
+Prerequisite and troubleshooting instructions are in
+`docs/windows_docker_container_setup.md`.
 
 ## MSBuild requirements
 

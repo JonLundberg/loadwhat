@@ -65,15 +65,15 @@ Last updated: 2026-07-09 by Codex.
 | ID | Status | Priority | Owner | Summary |
 |----|--------|----------|-------|---------|
 | D1 | done | P0 | unassigned | Define Windows container test contract and host prerequisites |
-| D2 | todo | P0 | unassigned | Add Docker files and container PowerShell test runner |
-| D3 | todo | P0 | unassigned | Add `cargo xtask test-container` entry point |
-| D4 | todo | P0 | unassigned | Add container-safe registry fixture scripts |
-| D5 | todo | P0 | unassigned | Add COM container smoke tests for real registry views |
-| D5A | todo | P0 | unassigned | Add host-registry sentinel checks around container tests |
-| D6 | todo | P1 | unassigned | Add container tests for HKCU/HKLM override behavior |
-| D7 | todo | P1 | unassigned | Add container tests for x86/x64 registry views and WOW64 server paths |
-| D8 | todo | P1 | unassigned | Add container tests for COM server dependency failures |
-| D9 | todo | P1 | unassigned | Document container workflow and cleanup expectations |
+| D2 | done | P0 | Codex | Add Docker files and container PowerShell test runner |
+| D3 | done | P0 | Codex | Add `cargo xtask test-container` entry point |
+| D4 | done | P0 | Codex | Add container-safe registry fixture scripts |
+| D5 | done | P0 | Codex | Add COM container smoke tests for real registry views |
+| D5A | done | P0 | Codex | Add host-registry sentinel checks around container tests |
+| D6 | in_progress | P1 | Codex | Add container tests for HKCU/HKLM override behavior |
+| D7 | in_progress | P1 | Codex | Add container tests for x86/x64 registry views and WOW64 server paths |
+| D8 | in_progress | P1 | Codex | Add container tests for COM server dependency failures |
+| D9 | done | P1 | Codex | Document container workflow and cleanup expectations |
 | C1 | todo | P1 | unassigned | Fix `com audit` dependency walk target-context issue |
 | C2 | todo | P2 | unassigned | Fix HKCU-present broken value falling through to HKLM |
 | C3 | todo | P2 | unassigned | Decide and fix COM indeterminate-error token contract |
@@ -526,6 +526,33 @@ The full effort is complete when:
 - Updated `docs/windows_docker_container_setup.md` to remove that persisted
   setting before rerunning the installer with `--quiet --backend=windows`.
 - No host COM registry mutation was performed.
+
+### 2026-07-09 - Codex container framework implementation
+
+- Committed the authority, review, Docker plan, and setup documentation as
+  `b0efa4a` (`Document COM Docker test plan and v2 authority`).
+- Added `cargo xtask test-container`, a Windows Server Core Dockerfile, guarded
+  PowerShell registry fixtures, exact summary-token assertions, x64/x86 native
+  fixtures, and read-only host registry sentinel checks.
+- The container runner uses `--isolation=hyperv`. Registry-writing scripts
+  require `LOADWHAT_CONTAINER_TESTS=1`, an image-only marker,
+  `ContainerType=2`, and `C:\WcSandboxState`.
+- Added static MSVC runtime linking after the first container execution exposed
+  a `vcruntime140.dll` dependency (`0xC0000135`). The release executable now
+  starts in Server Core without copying host runtime DLLs into the image.
+- Ran `cargo check -p xtask`; passed.
+- Ran `cargo build --release --locked`; passed. A recursive import scan of the
+  release executable reported no missing imports and no `vcruntime140.dll`
+  import.
+- Ran `cargo xtask test-container`; passed with 12 end-to-end COM cases.
+- Ran `cargo test --locked`; passed with 264 unit/default tests.
+- Ran `cargo xtask test`; passed with 99 harness-backed integration tests.
+- The passing cases cover HKLM ProgID/CLSID resolution, real 64/32-bit views,
+  HKCU override, CurVer, TreatAs, quoted LocalServer32 parsing, healthy and
+  missing-dependency servers, registry audit fallback, sidecar-manifest
+  precedence, and a real x86 server image.
+- Host registry sentinels passed before and after every Docker run. No host COM
+  registry mutation was performed.
 
 ### 2026-07-09 - Codex Windows container setup success
 

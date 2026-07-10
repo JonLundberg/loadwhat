@@ -577,6 +577,8 @@ An alternative to programmatic manifest embedding is building fixture EXEs via M
 
 ### Tier 3: container-based system tests
 
+Status: implemented by `cargo xtask test-container`.
+
 Runs with:
 
 ```text
@@ -585,7 +587,14 @@ cargo xtask test-container
 
 This tier exists for the Windows behaviors that mocks should not be trusted to simulate.
 
-Gated by: `#[cfg(feature = "container-tests")]` or run externally via Docker.
+The `xtask` command builds and stages the release executable and native
+fixtures, then runs `tests/com/container/run_container_tests.ps1` inside a
+Windows Server Core image with Hyper-V isolation.
+
+The host side performs read-only sentinel checks before and after `docker run`.
+Registry setup is self-guarding and requires both image-only environment
+markers and Windows container identity signals. The setup script is never
+invoked by the host runner.
 
 #### What mocks cannot cover
 

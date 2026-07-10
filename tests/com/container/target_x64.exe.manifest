@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <file name="lwtest_manifest_server.dll">
+    <comClass
+      clsid="{7F4D0007-4C57-4A54-9000-000000000007}"
+      progid="LoadWhat.Container.ComTests.Manifest"
+      threadingModel="Both" />
+  </file>
+</assembly>
