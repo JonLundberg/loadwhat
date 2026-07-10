@@ -8,12 +8,13 @@ You are updating the Windows Rust CLI tool `loadwhat`.
 
 Read these files first, in order:
 
-1. `docs/loadwhat_spec_v1.md`
-2. `AGENTS.md`
-3. `docs/loadwhat_ai_agent_spec.md`
-4. `README.md`
-5. `docs/testing.md`
-6. `CONTRIBUTING.md`
+1. `docs/loadwhat_spec_v2.md`
+2. `docs/loadwhat_spec_v1.md`
+3. `AGENTS.md`
+4. `docs/loadwhat_ai_agent_spec.md`
+5. `README.md`
+6. `docs/testing.md`
+7. `CONTRIBUTING.md`
 
 Then inspect the current source tree, especially:
 

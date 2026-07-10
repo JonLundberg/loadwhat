@@ -10,6 +10,99 @@ review time — re-confirm before editing since line numbers drift.
 
 ---
 
+## 2026-07-08 COM support review
+
+Scope: recent COM support commits through `8d4d8c9`. Verification:
+`cargo test` (264 tests, all pass) and `cargo xtask test` (99 integration tests,
+all pass).
+
+### P1 - `com audit` dependency walk ignores target load context
+
+**Where:** `RealComFileSystem::walk_dependencies`, `src/main.rs`.
+
+**Problem:** `com audit` is target-scoped, but server dependency validation only
+passes the COM server path into `walk_dependencies`. The production backend then
+uses the COM server directory as both the module app directory and the search
+CWD. That can make audit results differ from the target process's actual load
+context:
+
+- false `SERVER_DEPS_MISSING` when the target app directory would satisfy the
+  COM server dependency
+- false `OK` when only the COM server directory has a dependency the target
+  activation would not find
+
+**Fix:** Pass target-derived search context through the COM validation path, at
+least for `com audit`. If the intended behavior is server-centric validation,
+change `docs/loadwhat_spec_v2.md` to say that explicitly and avoid describing it
+as target activation-prerequisite diagnosis.
+
+**Tests:** Add fixture-backed `com audit` coverage where the target directory and
+server directory contain different dependency sets.
+
+### P2 - HKCU override can incorrectly fall through to HKLM
+
+**Where:** `ComResolver::merged_read_string`, `src/com/resolver.rs`.
+
+**Problem:** The merge helper reads HKCU first, but if the HKCU value is missing,
+empty, or non-string it continues to HKLM. The v2 spec says HKCU overrides HKLM
+for the same key path. An HKCU `InprocServer32` key with a broken or missing
+default value should not silently use HKLM's server.
+
+**Fix:** Distinguish "HKCU key exists but value is unusable" from "HKCU key is
+absent." Existing HKCU registration keys should override HKLM and classify the
+registration as broken instead of falling through.
+
+**Tests:** Add mock resolver tests for HKCU-present/HKLM-present cases with
+missing, empty, and non-string HKCU default values.
+
+### P2 - Indeterminate COM paths skip token output
+
+**Where:** `com_error_exit`, `src/main.rs`.
+
+**Problem:** `com_error_exit` writes raw stderr and exits before emitting a
+`COM_*` token. The v2 spec says summary mode emits exactly one token line for
+COM commands. Missing audit targets, unreadable target images, unsupported
+target machine types, and dependency-walk indeterminate errors currently break
+that greppable output contract.
+
+**Fix:** Either emit a spec-defined summary token for indeterminate COM results,
+or relax the v2 output-mode policy to document which failures may produce only
+stderr.
+
+**Tests:** Add CLI-level COM tests for missing audit target, malformed audit
+target, unreadable server file, and unsupported target machine.
+
+### P3 - COM coverage is not yet broad enough for shipped behavior
+
+**Where:** `src/com/*`, `src/cli.rs`, `tests/integration.rs`.
+
+**Problem:** COM has a strong pure unit-test seam and many mock-based tests, but
+there are no COM integration tests that exercise:
+
+- real `RegOpenKeyExW` WOW64 view flags
+- real HKCU/HKLM registration data
+- real CLI token output and exit codes
+- real sidecar or embedded manifests through `loadwhat.exe`
+- x86/x64 COM server fixture behavior
+
+**Fix:** Implement Tier 2 fixture-backed COM tests from
+`docs/com_testing_strategy.md`. Keep mock tests as the fast logic layer, but add
+at least a small public-contract COM CLI suite.
+
+### P3 - Authority/docs were stale after COM landed
+
+**Status:** Updated in the same change that added this review section.
+
+**Problem:** Several docs still described v1 as the only current authority after
+COM support landed. That made COM look implemented but not authoritative.
+
+**Fix applied:** `docs/loadwhat_spec_v2.md` is now the top-level authoritative
+spec. `docs/loadwhat_spec_v1.md` is incorporated for `run` and `imports`.
+`AGENTS.md`, `README.md`, `docs/roadmap.md`, and
+`docs/loadwhat_ai_agent_spec.md` now point to v2 as current authority.
+
+---
+
 ## Context for the implementing agent
 
 `loadwhat` is a Windows x64 Rust CLI that diagnoses DLL load failures via the
@@ -21,7 +114,9 @@ line-oriented `TOKEN key=value` contract (`emit.rs`).
 
 The code is high quality — these are gaps and cleanups, not a rewrite. Preserve
 the existing output-token contract and the deterministic tie-breaking behavior;
-both are covered by tests that encode the v1 spec (`docs/loadwhat_spec_v1.md`).
+both are covered by tests that encode the current v2 spec
+(`docs/loadwhat_spec_v2.md`), with `run` and `imports` behavior incorporated
+from `docs/loadwhat_spec_v1.md`.
 
 ---
 

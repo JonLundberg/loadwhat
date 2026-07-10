@@ -1,4 +1,4 @@
-# loadwhat v1 Spec (authoritative)
+# loadwhat v1 Spec (`run` / `imports` contract)
 
 Purpose: a single-exe, x64 Rust CLI that answers "what broke first during process startup?" for DLL loading (static first), using Win32 debug APIs directly (no DbgEng).
 
@@ -8,7 +8,7 @@ Output is line-oriented and greppable:
 TOKEN key=value key=value ...
 ```
 
-This document is the source of truth for current implemented behavior.
+This document is incorporated by [docs/loadwhat_spec_v2.md](./loadwhat_spec_v2.md) for the current `run` and `imports` behavior. The top-level current authority is `docs/loadwhat_spec_v2.md`.
 
 ## 1) CLI
 

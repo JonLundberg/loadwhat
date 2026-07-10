@@ -2,7 +2,7 @@
 
 This document describes the recommended testing strategy for planned COM support.
 
-It is implementation guidance, not part of the public CLI contract. The draft behavior contract lives in [docs/loadwhat_spec_v2.md](./loadwhat_spec_v2.md). The design rationale lives in [docs/com_feature_analysis.md](./com_feature_analysis.md).
+It is implementation guidance, not part of the public CLI contract. The current behavior contract lives in [docs/loadwhat_spec_v2.md](./loadwhat_spec_v2.md). The design rationale lives in [docs/com_feature_analysis.md](./com_feature_analysis.md).
 
 ## Goals
 

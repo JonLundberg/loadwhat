@@ -1,10 +1,10 @@
 # COM Feature Analysis for loadwhat
 
-This document is the design rationale for planned COM support in `loadwhat`.
+This document is the design rationale for COM support in `loadwhat`.
 
-It is intentionally not the public contract. The draft behavior contract lives in [docs/loadwhat_spec_v2.md](./loadwhat_spec_v2.md). The COM-specific testing approach lives in [docs/com_testing_strategy.md](./com_testing_strategy.md).
+It is intentionally not the public contract. The current behavior contract lives in [docs/loadwhat_spec_v2.md](./loadwhat_spec_v2.md). The COM-specific testing approach lives in [docs/com_testing_strategy.md](./com_testing_strategy.md).
 
-Current implemented behavior remains defined by [docs/loadwhat_spec_v1.md](./loadwhat_spec_v1.md).
+`docs/loadwhat_spec_v1.md` remains incorporated by v2 for the existing `run` and `imports` commands.
 
 ## Mission framing
 
@@ -24,9 +24,9 @@ That means COM support should answer questions like:
 - whether that server matches the caller's architecture
 - whether the server itself has broken transitive DLL dependencies
 
-## Recommended V2 scope
+## V2 scope
 
-The draft V2 spec narrows the initial COM surface to standalone commands:
+The V2 spec narrows the initial COM surface to standalone commands:
 
 ```text
 loadwhat com clsid <{CLSID}>

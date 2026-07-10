@@ -1,6 +1,8 @@
-# loadwhat v2 Spec (COM commands)
+# loadwhat v2 Spec (authoritative)
 
-Status: implemented. This document is the behavior contract for the `com` command family. `run` and `imports` behavior remains defined by [docs/loadwhat_spec_v1.md](./loadwhat_spec_v1.md).
+Status: implemented. This document is the top-level behavior contract for current `loadwhat`.
+
+The `com` command family is defined directly in this document. `run` and `imports` behavior is incorporated by reference from [docs/loadwhat_spec_v1.md](./loadwhat_spec_v1.md) unless this document explicitly says otherwise.
 
 Purpose: extend `loadwhat` with deterministic COM registration and activation-prerequisite diagnosis without changing the v1 behavior of `run` or `imports`.
 
@@ -11,6 +13,15 @@ TOKEN key=value key=value ...
 ```
 
 ## 1) CLI
+
+### Existing commands
+
+```text
+loadwhat run [OPTIONS] <TARGET> [TARGET_ARGS...]
+loadwhat imports <exe_or_dll> [--cwd <dir>]
+```
+
+The current contract for these commands is the v1 contract incorporated from [docs/loadwhat_spec_v1.md](./loadwhat_spec_v1.md).
 
 ### COM commands
 

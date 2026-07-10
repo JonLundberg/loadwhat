@@ -1,8 +1,8 @@
 # loadwhat Roadmap (non-authoritative)
 
-This file lists planned or previously-considered features that are not part of current v1 behavior.
+This file lists planned or previously-considered features that are not part of current v2 behavior.
 
-Authoritative current behavior is defined by `docs/loadwhat_spec_v1.md`.
+Authoritative current behavior is defined by `docs/loadwhat_spec_v2.md`.
 
 ## Implemented since v1.0
 

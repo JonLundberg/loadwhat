@@ -4,19 +4,20 @@ This file defines mandatory behavioral rules for Codex when working in this repo
 
 ## Primary objective
 
-Build **loadwhat**, a single-executable Windows x64 Rust CLI that diagnoses process-startup DLL loading failures using Win32 Debug APIs directly (no DbgEng).
+Build **loadwhat**, a single-executable Windows x64 Rust CLI that diagnoses process-startup DLL loading failures using Win32 Debug APIs directly (no DbgEng), and provides deterministic COM registration and activation-prerequisite diagnosis.
 
 ## Authority hierarchy (strict order)
 
 If instructions conflict, follow this order:
 
-1. `docs/loadwhat_spec_v1.md` (absolute authority)
-2. `AGENTS.md` (this file)
-3. `docs/loadwhat_ai_agent_spec.md`
-4. `README.md`
-5. Inline code comments
+1. `docs/loadwhat_spec_v2.md` (absolute authority for current behavior)
+2. `docs/loadwhat_spec_v1.md` (incorporated by v2 for `run` and `imports`)
+3. `AGENTS.md` (this file)
+4. `docs/loadwhat_ai_agent_spec.md`
+5. `README.md`
+6. Inline code comments
 
-Never override or reinterpret the authoritative v1 spec.
+Never override or reinterpret the authoritative v2 spec. For `run` and `imports`, v2 delegates to the v1 contract unless v2 explicitly says otherwise.
 
 ## Roadmap
 
@@ -49,7 +50,7 @@ Do not implement roadmap items unless explicitly requested.
   - `DEBUG_STRING`
   - `RUN_END`
 - Do not replace `RUNTIME_LOADED` with a new `LOAD` token.
-- Do not introduce new public token families unless `docs/loadwhat_spec_v1.md` is updated first.
+- Do not introduce new public token families unless `docs/loadwhat_spec_v2.md` is updated first.
 
 ## Truthfulness requirements
 
@@ -93,7 +94,7 @@ Report errors via spec-defined token output (or documented exit code behavior), 
 
 ## Implementation workflow
 
-1. Read relevant section of `docs/loadwhat_spec_v1.md`.
+1. Read relevant section of `docs/loadwhat_spec_v2.md`, and `docs/loadwhat_spec_v1.md` when changing `run` or `imports`.
 2. Identify required tokens and behavior.
 3. Implement minimal compliant code.
 4. Build.
@@ -129,11 +130,17 @@ Do not mix unrelated feature work in one change.
 - fixture-driven integration coverage
 - deterministic test harness workflow (`cargo xtask test`)
 
+### Milestone 5 - COM diagnosis
+
+- `com clsid`, `com progid`, `com server`, and `com audit` per v2 spec
+- deterministic registry, manifest, PE, and dependency diagnosis
+- protect non-COM `run` and `imports` behavior from regressions
+
 ## Repo layout expectations
 
 - Specs/docs stay under `/docs/`.
 - Keep code in focused modules, for example:
-  - `cli.rs`, `debug_run.rs`, `pe.rs`, `search.rs`, `loader_snaps.rs`, `win.rs`, `emit.rs`
+  - `cli.rs`, `debug_run.rs`, `pe.rs`, `search.rs`, `loader_snaps.rs`, `win.rs`, `emit.rs`, `com/*`
 
 ## Testing expectations
 
@@ -162,9 +169,10 @@ Before declaring work complete, verify:
 - `loadwhat.exe --help` executes
 - `loadwhat.exe imports C:\Windows\System32\notepad.exe` executes
 - `loadwhat.exe run C:\Windows\System32\notepad.exe` executes
-- output contract matches `docs/loadwhat_spec_v1.md`
+- `loadwhat.exe com progid Shell.Application` executes
+- output contract matches `docs/loadwhat_spec_v2.md`
 - behavior is deterministic across repeated runs
 
 ## Final directive
 
-When in doubt, re-read `docs/loadwhat_spec_v1.md` and implement only what it defines.
+When in doubt, re-read `docs/loadwhat_spec_v2.md` and implement only what it defines. For `run` and `imports`, also re-read `docs/loadwhat_spec_v1.md`.

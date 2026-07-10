@@ -12,12 +12,19 @@ The current crate is primarily a binary crate. The high-level orchestration live
 
 Primary project references:
 
+Current authority:
+
+1. `docs/loadwhat_spec_v2.md` - current behavior and public token contract
+2. `docs/loadwhat_spec_v1.md` - incorporated by v2 for `run` and `imports`
+
+Historical orientation below may still describe pre-v2 status:
+
 1. `docs/loadwhat_spec_v1.md` — behavior and public token contract
 2. `AGENTS.md` — repository/agent rules
 3. `docs/loadwhat_ai_agent_spec.md`
 4. `README.md`
 
-When this map conflicts with source or the v1 spec, treat the source/spec as authoritative and update this map.
+When this map conflicts with source or the v2 spec, treat the source/spec as authoritative and update this map.
 
 ---
 

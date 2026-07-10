@@ -4,11 +4,12 @@
 
 This document replaces the stale planning note at `C:\Users\jonlu\Downloads\loadwhat_specs_for_codex.md`.
 
-It is not authoritative. Current product behavior is still defined by:
+It is not authoritative. Current product behavior is defined by:
 
-1. `docs/loadwhat_spec_v1.md`
-2. `AGENTS.md`
-3. this file
+1. `docs/loadwhat_spec_v2.md`
+2. `docs/loadwhat_spec_v1.md` for `run` / `imports` as incorporated by v2
+3. `AGENTS.md`
+4. this file
 
 This file exists to give Codex and other contributors a current work snapshot that matches the repository as it exists now.
 
