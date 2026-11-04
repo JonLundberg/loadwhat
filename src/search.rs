@@ -242,7 +242,7 @@ fn redirect_system_dir(dir: &Path, native_dir: &Path, wow64_dir: &Path) -> PathB
     let lower = normalize_cmp(dir);
     match lower.strip_prefix(&native) {
         Some(rest) if rest.is_empty() || rest.starts_with('\\') => {
-            let original = dir.as_os_str().to_string_lossy();
+            let original = dir.as_os_str().to_string_lossy().replace('/', "\\");
             // ASCII lowercasing keeps byte offsets aligned with the original.
             let tail = original[native.len()..].trim_end_matches('\\');
             PathBuf::from(format!("{}{tail}", wow64_dir.display()))
@@ -270,7 +270,10 @@ fn dedup_case_insensitive(paths: Vec<PathBuf>) -> Vec<PathBuf> {
 }
 
 fn normalize_cmp(path: &Path) -> String {
-    path.as_os_str().to_string_lossy().to_ascii_lowercase()
+    path.as_os_str()
+        .to_string_lossy()
+        .replace('/', "\\")
+        .to_ascii_lowercase()
 }
 
 #[cfg(test)]
@@ -689,6 +692,51 @@ mod tests {
     }
 
     #[test]
+    fn redirect_system_dir_maps_forward_and_mixed_separators() {
+        for dir in [
+            "C:/WINDOWS/System32/Wbem/",
+            r"C:\Windows\System32/Wbem",
+            r"C:/Windows/System32\Wbem",
+        ] {
+            assert_eq!(redirect(dir), PathBuf::from(r"C:\Windows\SysWOW64\Wbem"));
+        }
+        assert_eq!(
+            redirect("C:/Windows/System32/"),
+            PathBuf::from(r"C:\Windows\SysWOW64")
+        );
+        assert_eq!(
+            redirect("C:/Windows/System32Extra/Wbem"),
+            PathBuf::from("C:/Windows/System32Extra/Wbem")
+        );
+    }
+
+    #[test]
+    fn wow64_redirection_resolves_dependency_from_forward_slash_path() {
+        let temp = unique_temp_dir("wow64-forward-slash");
+        let app = temp.join("app");
+        let native = temp.join("System32");
+        let wow64 = temp.join("SysWOW64");
+        for dir in [&app, &native.join("Extra"), &wow64.join("Extra")] {
+            fs::create_dir_all(dir).expect("failed to create search directory");
+        }
+        write_pe_with_machine(&native.join("Extra\\dep.dll"), MACHINE_X64);
+        let expected = wow64.join("Extra\\dep.dll");
+        write_pe_with_machine(&expected, MACHINE_X86);
+        let path_dir = PathBuf::from(native.join("Extra").to_string_lossy().replace('\\', "/"));
+        let mut context = temp_context(app.clone(), app, vec![path_dir], true);
+        context.machine = MachineType::X86;
+        context.system_dir = native;
+        context.apply_wow64_redirection(&wow64);
+
+        let resolution = resolve_dll("dep.dll", &context);
+
+        assert!(matches!(resolution.kind, ResolutionKind::Found));
+        assert_eq!(resolution.chosen, Some(expected));
+        assert_eq!(results(&resolution).last(), Some(&"HIT"));
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[test]
     fn redirect_system_dir_leaves_other_directories_alone() {
         assert_eq!(redirect(r"C:\App"), PathBuf::from(r"C:\App"));
         assert_eq!(
@@ -704,7 +752,9 @@ mod tests {
             cwd: PathBuf::from(r"C:\Windows\System32"),
             path_dirs: vec![
                 PathBuf::from(r"C:\Windows\System32"),
+                PathBuf::from("C:/Windows/SysWOW64"),
                 PathBuf::from(r"C:\Windows\System32\Wbem"),
+                PathBuf::from("C:/Windows/System32/Wbem"),
                 PathBuf::from(r"C:\Tools"),
             ],
             safedll: true,

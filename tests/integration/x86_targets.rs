@@ -62,6 +62,14 @@ fn search_paths(stdout: &str) -> Vec<&str> {
         .collect()
 }
 
+fn loadwhat_lines(stdout: &str) -> Vec<&str> {
+    stdout
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with("HOST:"))
+        .collect()
+}
+
 #[test]
 fn x86_target_success_with_dependencies_present() {
     let paths = harness::paths::require_from_env();
@@ -146,6 +154,96 @@ fn x86_target_reports_dynamic_missing_through_loader_snaps() {
         "DYNAMIC_MISSING",
         &[r#"dll="lwtest_a.dll""#, r#"reason="NOT_FOUND""#],
     );
+}
+
+#[test]
+fn dynamic_wrong_machine_probe_preserves_bad_image_diagnosis() {
+    let paths = harness::paths::require_from_env();
+    for (arch, host, wrong_dll) in [
+        (
+            "x86",
+            x86(fixture::HOST_DYNAMIC_LOADLIBRARY_FULLPATH_EXE),
+            fixture::DLL_LWTEST_B.to_string(),
+        ),
+        (
+            "x64",
+            fixture::HOST_DYNAMIC_LOADLIBRARY_FULLPATH_EXE.to_string(),
+            x86(fixture::DLL_LWTEST_B),
+        ),
+    ] {
+        let case = TestCase::new(&paths, &format!("{arch}_dynamic_wrong_machine"))
+            .expect("failed to initialize test case");
+        let app = case.mkdir("app").expect("failed to create app directory");
+        let exe = case
+            .copy_fixture(&host, r"app\host.exe")
+            .expect("failed to copy host fixture");
+        let wrong = case
+            .copy_fixture(&wrong_dll, r"wrong\lwtest_b.dll")
+            .expect("failed to copy wrong-machine DLL");
+        let mut args = run_args(&app, &exe, &[]);
+        args.push(os(&wrong));
+        let first = run_target(&paths, &case, &args);
+        let second = run_target(&paths, &case, &args);
+
+        for result in [&first, &second] {
+            harness::assert::assert_exit_code(result, 10);
+            assert_eq!(loadwhat_lines(&result.stdout).len(), 1, "{}", result.stdout);
+            assert_line(
+                &result.stdout,
+                "DYNAMIC_MISSING",
+                &[
+                    r#"dll="lwtest_b.dll""#,
+                    r#"reason="BAD_IMAGE""#,
+                    "status=0xC000007B",
+                ],
+            );
+        }
+        assert_eq!(first.stdout, second.stdout);
+
+        let mut args = run_args(&app, &exe, &["-v"]);
+        args.push(os(&wrong));
+        let verbose = run_target(&paths, &case, &args);
+        harness::assert::assert_exit_code(&verbose, 10);
+        assert_line(
+            &verbose.stdout,
+            "RUNTIME_LOADED",
+            &[r#"dll="lwtest_b.dll""#],
+        );
+        assert_line(
+            &verbose.stdout,
+            "DYNAMIC_MISSING",
+            &[r#"dll="lwtest_b.dll""#, r#"reason="BAD_IMAGE""#],
+        );
+        assert_line(&verbose.stdout, "SUMMARY", &["dynamic_missing=1"]);
+    }
+}
+
+#[test]
+fn dynamic_wrong_machine_probe_is_cleared_by_later_compatible_load() {
+    let paths = harness::paths::require_from_env();
+    let case = TestCase::new(&paths, "x86_dynamic_wrong_machine_retry")
+        .expect("failed to initialize test case");
+    let app = case.mkdir("app").expect("failed to create app directory");
+    let exe = case
+        .copy_fixture(
+            &x86(fixture::HOST_DYNAMIC_LOADLIBRARY_SEQUENCE_EXE),
+            r"app\host.exe",
+        )
+        .expect("failed to copy host fixture");
+    let wrong = case
+        .copy_fixture(fixture::DLL_LWTEST_B, r"wrong\lwtest_b.dll")
+        .expect("failed to copy wrong-machine DLL");
+    let right = case
+        .copy_fixture(&x86(fixture::DLL_LWTEST_B), r"right\lwtest_b.dll")
+        .expect("failed to copy compatible DLL");
+    let mut args = run_args(&app, &exe, &[]);
+    args.push(OsString::from(format!("optional:{}", wrong.display())));
+    args.push(os(&right));
+
+    let result = run_target(&paths, &case, &args);
+
+    harness::assert::assert_exit_code(&result, 0);
+    assert_eq!(loadwhat_lines(&result.stdout), vec!["SUCCESS status=0"]);
 }
 
 #[test]

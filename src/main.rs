@@ -421,7 +421,9 @@ fn run_command(opts: RunOptions) -> i32 {
     // Dynamic (LoadLibrary) failures are observed via loader-snaps debug strings.
     if opts.loader_snaps && static_missing_count + static_bad_image_count == 0 {
         let exe_dir = exe_path.parent().unwrap_or_else(|| Path::new("."));
-        if let Some(dm) = detect_dynamic_missing_from_debug_strings(&outcome, exe_dir, &cwd) {
+        if let Some(dm) =
+            detect_dynamic_missing_from_debug_strings(&outcome, exe_dir, &cwd, target_machine)
+        {
             dynamic_failure_seen = true;
             first_break = true;
             if test_mode {
@@ -485,7 +487,8 @@ fn run_command(opts: RunOptions) -> i32 {
     }
 
     if test_mode && detected_missing_name.is_none() {
-        detected_missing_name = detect_missing_lwtest_dll_from_debug_strings(&outcome);
+        detected_missing_name =
+            detect_missing_lwtest_dll_from_debug_strings(&outcome, target_machine);
     }
 
     if test_mode {
@@ -1576,13 +1579,16 @@ fn prefer_runtime_observed_path(candidate: &Path, existing: &Path) -> bool {
 fn target_loaded_modules(modules: &[LoadedModule], machine: MachineType) -> Vec<&LoadedModule> {
     modules
         .iter()
-        .filter(|module| {
-            module
-                .path
-                .as_deref()
-                .is_none_or(|path| pe::is_file_loadable_by(path, machine))
-        })
+        .filter(|module| is_target_loaded_module(module, machine))
         .collect()
+}
+
+#[cfg(windows)]
+fn is_target_loaded_module(module: &LoadedModule, machine: MachineType) -> bool {
+    module
+        .path
+        .as_deref()
+        .is_none_or(|path| pe::is_file_loadable_by(path, machine))
 }
 
 #[cfg(windows)]
@@ -1714,15 +1720,20 @@ fn test_mode_exit_code(outcome: &RunOutcome, load_failure_detected: bool) -> i32
 }
 
 #[cfg(windows)]
-fn detect_missing_lwtest_dll_from_debug_strings(outcome: &RunOutcome) -> Option<String> {
+fn detect_missing_lwtest_dll_from_debug_strings(
+    outcome: &RunOutcome,
+    machine: MachineType,
+) -> Option<String> {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    detect_dynamic_missing_from_debug_strings(outcome, Path::new("."), &cwd).and_then(|v| {
-        if v.dll.starts_with("lwtest_") {
-            Some(v.dll)
-        } else {
-            None
-        }
-    })
+    detect_dynamic_missing_from_debug_strings(outcome, Path::new("."), &cwd, machine).and_then(
+        |v| {
+            if v.dll.starts_with("lwtest_") {
+                Some(v.dll)
+            } else {
+                None
+            }
+        },
+    )
 }
 
 #[cfg(windows)]
@@ -1779,6 +1790,7 @@ fn detect_dynamic_missing_from_debug_strings(
     outcome: &RunOutcome,
     exe_dir: &Path,
     cwd: &Path,
+    machine: MachineType,
 ) -> Option<DynamicMissing> {
     let mut last_load_by_tid: HashMap<u32, DynamicLoadContext> = HashMap::new();
     let mut candidates: Vec<DynamicCandidate> = Vec::new();
@@ -1788,8 +1800,12 @@ fn detect_dynamic_missing_from_debug_strings(
     for (idx, event) in outcome.runtime_events.iter().enumerate() {
         match event {
             RuntimeEvent::RuntimeLoaded(module) => {
-                let basename = module_name_lower(Path::new(&module.dll_name));
-                record_dynamic_success(&mut latest_success_idx_by_basename, &basename, idx);
+                // Wrong-architecture probes remain in the runtime timeline,
+                // but cannot resolve a dynamic failure for this target.
+                if is_target_loaded_module(module, machine) {
+                    let basename = module_name_lower(Path::new(&module.dll_name));
+                    record_dynamic_success(&mut latest_success_idx_by_basename, &basename, idx);
+                }
             }
             RuntimeEvent::DebugString(debug) => {
                 let raw = debug.text.trim();
@@ -2826,7 +2842,7 @@ mod dynamic_missing_tests {
     fn detect_for_tests(outcome: &RunOutcome) -> Option<DynamicMissing> {
         let exe_dir = Path::new(r"C:\App");
         let cwd = Path::new(r"C:\App");
-        detect_dynamic_missing_from_debug_strings(outcome, exe_dir, cwd)
+        detect_dynamic_missing_from_debug_strings(outcome, exe_dir, cwd, MachineType::X64)
     }
 
     #[test]
@@ -2896,13 +2912,16 @@ mod dynamic_missing_tests {
         let outcome = outcome_with_debug_lines(&[
             r#"LdrLoadDll failed for C:\App\foo.dll Status: 0xC0000135"#,
         ]);
-        assert_eq!(detect_missing_lwtest_dll_from_debug_strings(&outcome), None);
+        assert_eq!(
+            detect_missing_lwtest_dll_from_debug_strings(&outcome, MachineType::X64),
+            None
+        );
 
         let outcome = outcome_with_debug_lines(&[
             r#"LdrLoadDll failed for C:\App\lwtest_b.dll Status: 0xC0000135"#,
         ]);
         assert_eq!(
-            detect_missing_lwtest_dll_from_debug_strings(&outcome),
+            detect_missing_lwtest_dll_from_debug_strings(&outcome, MachineType::X64),
             Some("lwtest_b.dll".to_string())
         );
     }
