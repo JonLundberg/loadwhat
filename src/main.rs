@@ -108,6 +108,7 @@ fn run_command(opts: RunOptions) -> i32 {
     let cwd = opts
         .cwd
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    let target_machine = pe::target_machine(&exe_path);
 
     let (outcome, mut snaps_guard) = if opts.loader_snaps {
         match debug_run::run_target(&exe_path, &opts.exe_args, Some(&cwd), opts.timeout_ms, true) {
@@ -117,7 +118,7 @@ fn run_command(opts: RunOptions) -> i32 {
                     .file_name()
                     .map(|v| v.to_string_lossy().to_string())
                     .unwrap_or_default();
-                let guard = match LoaderSnapsGuard::enable_for_image(&image_name) {
+                let guard = match LoaderSnapsGuard::enable_for_image(&image_name, target_machine) {
                     Ok(guard) => guard,
                     Err(code) => {
                         eprintln!("loader-snaps enable failed: 0x{code:08X}");
@@ -165,10 +166,7 @@ fn run_command(opts: RunOptions) -> i32 {
                         &[
                             field("topic", quote("loader-snaps")),
                             field("detail", quote("wow64-target-unsupported")),
-                            field(
-                                "message",
-                                quote("WOW64 target support is roadmap-only in v1"),
-                            ),
+                            field("message", quote("only x86 WOW64 targets are supported")),
                         ],
                     );
                 }
@@ -221,10 +219,7 @@ fn run_command(opts: RunOptions) -> i32 {
                     &[
                         field("topic", quote("loader-snaps")),
                         field("detail", quote("wow64-target-unsupported")),
-                        field(
-                            "message",
-                            quote("WOW64 target support is roadmap-only in v1"),
-                        ),
+                        field("message", quote("only x86 WOW64 targets are supported")),
                     ],
                 );
             }
@@ -242,9 +237,10 @@ fn run_command(opts: RunOptions) -> i32 {
         emit_run_events(&exe_path, &cwd, &outcome);
     }
 
+    let target_modules = target_loaded_modules(&outcome.loaded_modules, target_machine);
     let mut runtime_loaded: HashSet<String> = HashSet::new();
     let mut runtime_observed: HashMap<String, PathBuf> = HashMap::new();
-    for module in &outcome.loaded_modules {
+    for module in &target_modules {
         let dll = module.dll_name.to_ascii_lowercase();
         runtime_loaded.insert(dll.clone());
 
@@ -277,7 +273,7 @@ fn run_command(opts: RunOptions) -> i32 {
     let heuristic_early_fail = matches!(outcome.end_kind, RunEndKind::ExitProcess)
         && outcome.exit_code.unwrap_or(0) != 0
         && outcome.elapsed_ms < 1500
-        && outcome.loaded_modules.len() <= 6;
+        && target_modules.len() <= 6;
 
     if loader_exception.is_some() || heuristic_early_fail {
         let confidence = if loader_exception.is_some() {
@@ -425,7 +421,9 @@ fn run_command(opts: RunOptions) -> i32 {
     // Dynamic (LoadLibrary) failures are observed via loader-snaps debug strings.
     if opts.loader_snaps && static_missing_count + static_bad_image_count == 0 {
         let exe_dir = exe_path.parent().unwrap_or_else(|| Path::new("."));
-        if let Some(dm) = detect_dynamic_missing_from_debug_strings(&outcome, exe_dir, &cwd) {
+        if let Some(dm) =
+            detect_dynamic_missing_from_debug_strings(&outcome, exe_dir, &cwd, target_machine)
+        {
             dynamic_failure_seen = true;
             first_break = true;
             if test_mode {
@@ -445,7 +443,7 @@ fn run_command(opts: RunOptions) -> i32 {
                 summary_line_emitted = true;
             } else {
                 let app_dir = exe_path.parent().unwrap_or_else(|| Path::new("."));
-                if let Ok(context) = dynamic_trace_search_context(app_dir, &cwd) {
+                if let Ok(context) = dynamic_trace_search_context(app_dir, &cwd, target_machine) {
                     emit(
                         TOKEN_SEARCH_ORDER,
                         &[field("safedll", if context.safedll { "1" } else { "0" })],
@@ -489,7 +487,8 @@ fn run_command(opts: RunOptions) -> i32 {
     }
 
     if test_mode && detected_missing_name.is_none() {
-        detected_missing_name = detect_missing_lwtest_dll_from_debug_strings(&outcome);
+        detected_missing_name =
+            detect_missing_lwtest_dll_from_debug_strings(&outcome, target_machine);
     }
 
     if test_mode {
@@ -874,17 +873,6 @@ fn emit_com_dependency_trace(server: &ServerValidation) {
             }
         }
     }
-
-    if server.status == ServerStatus::Skipped {
-        emit(
-            TOKEN_NOTE,
-            &[
-                field("topic", quote("com")),
-                field("detail", quote("out-of-scope")),
-                field("feature", quote("x86-dependency-walk")),
-            ],
-        );
-    }
 }
 
 #[cfg(windows)]
@@ -957,11 +945,7 @@ fn com_server_command(
     let status_token = if denied {
         "ACCESS_DENIED"
     } else {
-        match validation.status {
-            // The x86 walk skip leaves existence/image checks authoritative.
-            ServerStatus::Skipped => "OK",
-            other => other.as_token(),
-        }
+        validation.status.as_token()
     };
 
     let mut fields = vec![
@@ -1293,7 +1277,8 @@ fn diagnose_static_imports_in_context(
     path_env_override: Option<OsString>,
     emit_mode: StaticEmitMode,
 ) -> Result<StaticReport, String> {
-    let context = SearchContext::from_environment(app_dir, cwd, path_env_override)?;
+    let machine = pe::target_machine(module_path);
+    let context = SearchContext::from_environment(app_dir, cwd, path_env_override, machine)?;
     let root_module_name = module_name_lower(module_path);
 
     if matches!(emit_mode, StaticEmitMode::Full) {
@@ -1586,6 +1571,26 @@ fn prefer_runtime_observed_path(candidate: &Path, existing: &Path) -> bool {
     (candidate_key.len(), candidate_key.as_str()) < (existing_key.len(), existing_key.as_str())
 }
 
+/// Keeps the modules that really belong to the target. `LOAD_DLL_DEBUG_EVENT`
+/// alone does not prove that: a WOW64 process also maps native 64-bit modules
+/// (ntdll.dll, wow64*.dll), and the loader maps a wrong-architecture DLL while
+/// probing it before rejecting it. Both stay in the runtime timeline.
+#[cfg(windows)]
+fn target_loaded_modules(modules: &[LoadedModule], machine: MachineType) -> Vec<&LoadedModule> {
+    modules
+        .iter()
+        .filter(|module| is_target_loaded_module(module, machine))
+        .collect()
+}
+
+#[cfg(windows)]
+fn is_target_loaded_module(module: &LoadedModule, machine: MachineType) -> bool {
+    module
+        .path
+        .as_deref()
+        .is_none_or(|path| pe::is_file_loadable_by(path, machine))
+}
+
 #[cfg(windows)]
 fn run_result_code(outcome: &RunOutcome, diagnosis_count: usize) -> i32 {
     if diagnosis_count > 0 {
@@ -1715,15 +1720,20 @@ fn test_mode_exit_code(outcome: &RunOutcome, load_failure_detected: bool) -> i32
 }
 
 #[cfg(windows)]
-fn detect_missing_lwtest_dll_from_debug_strings(outcome: &RunOutcome) -> Option<String> {
+fn detect_missing_lwtest_dll_from_debug_strings(
+    outcome: &RunOutcome,
+    machine: MachineType,
+) -> Option<String> {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    detect_dynamic_missing_from_debug_strings(outcome, Path::new("."), &cwd).and_then(|v| {
-        if v.dll.starts_with("lwtest_") {
-            Some(v.dll)
-        } else {
-            None
-        }
-    })
+    detect_dynamic_missing_from_debug_strings(outcome, Path::new("."), &cwd, machine).and_then(
+        |v| {
+            if v.dll.starts_with("lwtest_") {
+                Some(v.dll)
+            } else {
+                None
+            }
+        },
+    )
 }
 
 #[cfg(windows)]
@@ -1780,6 +1790,7 @@ fn detect_dynamic_missing_from_debug_strings(
     outcome: &RunOutcome,
     exe_dir: &Path,
     cwd: &Path,
+    machine: MachineType,
 ) -> Option<DynamicMissing> {
     let mut last_load_by_tid: HashMap<u32, DynamicLoadContext> = HashMap::new();
     let mut candidates: Vec<DynamicCandidate> = Vec::new();
@@ -1789,8 +1800,12 @@ fn detect_dynamic_missing_from_debug_strings(
     for (idx, event) in outcome.runtime_events.iter().enumerate() {
         match event {
             RuntimeEvent::RuntimeLoaded(module) => {
-                let basename = module_name_lower(Path::new(&module.dll_name));
-                record_dynamic_success(&mut latest_success_idx_by_basename, &basename, idx);
+                // Wrong-architecture probes remain in the runtime timeline,
+                // but cannot resolve a dynamic failure for this target.
+                if is_target_loaded_module(module, machine) {
+                    let basename = module_name_lower(Path::new(&module.dll_name));
+                    record_dynamic_success(&mut latest_success_idx_by_basename, &basename, idx);
+                }
             }
             RuntimeEvent::DebugString(debug) => {
                 let raw = debug.text.trim();
@@ -2347,7 +2362,11 @@ fn is_loader_related_code(code: u32) -> bool {
 }
 
 #[cfg(windows)]
-fn dynamic_trace_search_context(app_dir: &Path, cwd: &Path) -> Result<SearchContext, String> {
+fn dynamic_trace_search_context(
+    app_dir: &Path,
+    cwd: &Path,
+    machine: MachineType,
+) -> Result<SearchContext, String> {
     // Keep this hook scoped to dynamic trace emission so static diagnosis stays
     // on the normal production path.
     if env::var("LOADWHAT_TEST_FORCE_DYNAMIC_SEARCH_CONTEXT_FAIL")
@@ -2357,7 +2376,7 @@ fn dynamic_trace_search_context(app_dir: &Path, cwd: &Path) -> Result<SearchCont
         return Err("forced dynamic search context failure".to_string());
     }
 
-    SearchContext::from_environment(app_dir, cwd, env_path_override(&[]))
+    SearchContext::from_environment(app_dir, cwd, env_path_override(&[]), machine)
 }
 
 #[cfg(windows)]
@@ -2823,7 +2842,7 @@ mod dynamic_missing_tests {
     fn detect_for_tests(outcome: &RunOutcome) -> Option<DynamicMissing> {
         let exe_dir = Path::new(r"C:\App");
         let cwd = Path::new(r"C:\App");
-        detect_dynamic_missing_from_debug_strings(outcome, exe_dir, cwd)
+        detect_dynamic_missing_from_debug_strings(outcome, exe_dir, cwd, MachineType::X64)
     }
 
     #[test]
@@ -2893,13 +2912,16 @@ mod dynamic_missing_tests {
         let outcome = outcome_with_debug_lines(&[
             r#"LdrLoadDll failed for C:\App\foo.dll Status: 0xC0000135"#,
         ]);
-        assert_eq!(detect_missing_lwtest_dll_from_debug_strings(&outcome), None);
+        assert_eq!(
+            detect_missing_lwtest_dll_from_debug_strings(&outcome, MachineType::X64),
+            None
+        );
 
         let outcome = outcome_with_debug_lines(&[
             r#"LdrLoadDll failed for C:\App\lwtest_b.dll Status: 0xC0000135"#,
         ]);
         assert_eq!(
-            detect_missing_lwtest_dll_from_debug_strings(&outcome),
+            detect_missing_lwtest_dll_from_debug_strings(&outcome, MachineType::X64),
             Some("lwtest_b.dll".to_string())
         );
     }
@@ -3152,5 +3174,66 @@ mod dynamic_missing_tests {
             r"c:\apptools\plugin.dll",
             &[r"c:\app".to_string()]
         ));
+    }
+
+    fn module_at(path: PathBuf) -> LoadedModule {
+        LoadedModule {
+            dll_name: "ntdll.dll".to_string(),
+            path: Some(path),
+            base: 0,
+        }
+    }
+
+    #[test]
+    fn target_loaded_modules_drops_native_modules_for_x86_target() {
+        let windir = PathBuf::from(env::var_os("WINDIR").expect("WINDIR should be set"));
+        let native = module_at(windir.join("System32").join("ntdll.dll"));
+        let guest = module_at(windir.join("SysWOW64").join("ntdll.dll"));
+        let unknown = LoadedModule {
+            dll_name: "UNKNOWN_0000000000000000".to_string(),
+            path: None,
+            base: 0,
+        };
+        let modules = [native, guest, unknown];
+
+        let kept = target_loaded_modules(&modules, MachineType::X86);
+
+        assert_eq!(kept.len(), 2);
+        assert!(kept[0]
+            .path
+            .as_ref()
+            .is_some_and(|path| path.to_string_lossy().contains("SysWOW64")));
+        assert!(kept[1].path.is_none());
+    }
+
+    #[test]
+    fn target_loaded_modules_drops_wrong_machine_probe_for_x64_target() {
+        let windir = PathBuf::from(env::var_os("WINDIR").expect("WINDIR should be set"));
+        let modules = [
+            module_at(windir.join("System32").join("ntdll.dll")),
+            module_at(windir.join("SysWOW64").join("ntdll.dll")),
+        ];
+
+        let kept = target_loaded_modules(&modules, MachineType::X64);
+
+        assert_eq!(kept.len(), 1);
+        assert!(kept[0]
+            .path
+            .as_ref()
+            .is_some_and(|path| path.to_string_lossy().contains("System32")));
+    }
+
+    #[test]
+    fn target_loaded_modules_keeps_everything_for_unknown_target() {
+        let windir = PathBuf::from(env::var_os("WINDIR").expect("WINDIR should be set"));
+        let modules = [
+            module_at(windir.join("System32").join("ntdll.dll")),
+            module_at(windir.join("SysWOW64").join("ntdll.dll")),
+        ];
+
+        assert_eq!(
+            target_loaded_modules(&modules, MachineType::Unknown).len(),
+            2
+        );
     }
 }

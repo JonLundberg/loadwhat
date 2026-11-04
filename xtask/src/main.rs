@@ -342,6 +342,7 @@ fn cmd_test() -> Result<(), String> {
         .map_err(|e| format!("failed to create {}: {e}", fixture_bin_root.display()))?;
 
     build_fixtures(&repo_root, &fixture_bin_root)?;
+    build_fixtures_for_platform(&repo_root, &fixture_bin_root.join("x86"), "Win32")?;
     run_rust_tests(&repo_root, &test_root, &fixture_bin_root)?;
     Ok(())
 }
@@ -355,6 +356,14 @@ fn repo_root() -> Result<PathBuf, String> {
 }
 
 fn build_fixtures(repo_root: &Path, fixture_bin_root: &Path) -> Result<(), String> {
+    build_fixtures_for_platform(repo_root, fixture_bin_root, "x64")
+}
+
+fn build_fixtures_for_platform(
+    repo_root: &Path,
+    fixture_bin_root: &Path,
+    platform: &str,
+) -> Result<(), String> {
     let msbuild = resolve_msbuild_program()?;
     let msvc_root = repo_root.join("tests").join("fixtures").join("msvc");
     let solution = msvc_root.join("LoadWhatFixtures.sln");
@@ -368,7 +377,7 @@ fn build_fixtures(repo_root: &Path, fixture_bin_root: &Path) -> Result<(), Strin
     }
 
     let outdir_prop = format!(
-        "/p:Configuration=Release;Platform=x64;LWTEST_OUTDIR={}",
+        "/p:Configuration=Release;Platform={platform};LWTEST_OUTDIR={}",
         msbuild_outdir_value(fixture_bin_root)
     );
 
@@ -392,7 +401,7 @@ fn build_fixtures(repo_root: &Path, fixture_bin_root: &Path) -> Result<(), Strin
         ("4", "lwtest_a_nested"),
     ] {
         let variant_prop = format!(
-            "/p:Configuration=Release;Platform=x64;LWTEST_OUTDIR={};LWTEST_VARIANT={variant};TargetName={target_name};BuildProjectReferences=false",
+            "/p:Configuration=Release;Platform={platform};LWTEST_OUTDIR={};LWTEST_VARIANT={variant};TargetName={target_name};BuildProjectReferences=false",
             msbuild_outdir_value(fixture_bin_root)
         );
         run_command(

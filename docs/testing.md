@@ -15,7 +15,7 @@ High-level behavior:
 
 1. deletes `target/loadwhat-tests/` from previous runs
 2. creates `target/loadwhat-tests/fixtures/bin/`
-3. builds MSVC fixtures via MSBuild
+3. builds MSVC fixtures via MSBuild for x64, and for x86 under `fixtures/bin/x86/`
 4. runs `cargo test --tests --features harness-tests` with harness environment set
 
 ## COM container tests

@@ -94,7 +94,6 @@ pub enum ServerStatus {
     DepsMissing,
     BitnessMismatch,
     AccessDenied,
-    Skipped,
 }
 
 impl ServerStatus {
@@ -106,7 +105,6 @@ impl ServerStatus {
             ServerStatus::DepsMissing => "SERVER_DEPS_MISSING",
             ServerStatus::BitnessMismatch => "BITNESS_MISMATCH",
             ServerStatus::AccessDenied => "ACCESS_DENIED",
-            ServerStatus::Skipped => "SKIPPED",
         }
     }
 }

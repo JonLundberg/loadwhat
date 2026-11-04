@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-use crate::pe;
+use crate::pe::{self, MachineType};
 use crate::win;
 
 #[derive(Clone)]
@@ -16,6 +16,8 @@ pub struct SearchContext {
     pub system_dir: PathBuf,
     pub windows_dir: PathBuf,
     pub system16_dir: Option<PathBuf>,
+    /// Architecture of the process whose loader is being modeled.
+    pub machine: MachineType,
 }
 
 #[derive(Clone)]
@@ -23,6 +25,27 @@ pub enum ResolutionKind {
     Found,
     Missing,
     BadImage,
+}
+
+/// Verdict on one search candidate. Unlike a corrupt image, a valid image of
+/// the wrong architecture does not end the search: the loader skips it and
+/// only fails with a bad-image error when nothing compatible is found later.
+enum CandidateClass {
+    Found,
+    Missing,
+    BadImage,
+    WrongMachine,
+}
+
+impl CandidateClass {
+    fn as_token(&self) -> &'static str {
+        match self {
+            CandidateClass::Found => "HIT",
+            CandidateClass::Missing => "MISS",
+            CandidateClass::BadImage => "BAD_IMAGE",
+            CandidateClass::WrongMachine => "WRONG_MACHINE",
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -44,6 +67,7 @@ impl SearchContext {
         app_dir: &Path,
         cwd: &Path,
         path_env: Option<OsString>,
+        machine: MachineType,
     ) -> Result<Self, String> {
         let safedll = win::safe_dll_search_mode();
         let system_dir = win::get_system_directory()?;
@@ -60,7 +84,7 @@ impl SearchContext {
             .map(parse_path_dirs)
             .unwrap_or_default();
 
-        Ok(Self {
+        let mut context = Self {
             app_dir: app_dir.to_path_buf(),
             cwd: cwd.to_path_buf(),
             path_dirs,
@@ -68,7 +92,24 @@ impl SearchContext {
             system_dir,
             windows_dir,
             system16_dir,
-        })
+            machine,
+        };
+        if machine == MachineType::X86 {
+            context.apply_wow64_redirection(&win::get_system_wow64_directory()?);
+        }
+        Ok(context)
+    }
+
+    /// Rewrites every root the way WOW64 file-system redirection presents it
+    /// to a 32-bit process: the native system directory becomes `wow64_dir`.
+    fn apply_wow64_redirection(&mut self, wow64_dir: &Path) {
+        let native_dir = self.system_dir.clone();
+        let redirect = |dir: &Path| redirect_system_dir(dir, &native_dir, wow64_dir);
+
+        self.app_dir = redirect(&self.app_dir);
+        self.cwd = redirect(&self.cwd);
+        self.path_dirs = self.path_dirs.iter().map(|dir| redirect(dir)).collect();
+        self.system_dir = wow64_dir.to_path_buf();
     }
 
     pub fn ordered_roots(&self) -> Vec<PathBuf> {
@@ -109,89 +150,104 @@ pub fn resolve_dll(dll_name: &str, context: &SearchContext) -> Resolution {
     let input = PathBuf::from(dll_name);
 
     if input.is_absolute() {
-        return resolve_absolute(&input, &mut candidates);
+        return resolve_absolute(&input, context.machine, &mut candidates);
     }
 
+    let mut first_wrong_machine = None;
     let roots = context.ordered_roots();
     for (idx, root) in roots.iter().enumerate() {
         let candidate = root.join(dll_name);
-        let result = classify_candidate(&candidate);
-        let token = match result {
-            ResolutionKind::Found => "HIT",
-            ResolutionKind::Missing => "MISS",
-            ResolutionKind::BadImage => "BAD_IMAGE",
-        };
+        let class = classify_candidate(&candidate, context.machine);
         candidates.push(CandidateResult {
             order: idx + 1,
             path: candidate.clone(),
-            result: token,
+            result: class.as_token(),
         });
-        match result {
-            ResolutionKind::Found => {
+        match class {
+            CandidateClass::Found => {
                 return Resolution {
                     kind: ResolutionKind::Found,
                     chosen: Some(candidate),
                     candidates,
                 }
             }
-            ResolutionKind::BadImage => {
+            CandidateClass::BadImage => {
                 return Resolution {
                     kind: ResolutionKind::BadImage,
                     chosen: Some(candidate),
                     candidates,
                 }
             }
-            ResolutionKind::Missing => {}
+            CandidateClass::WrongMachine => {
+                first_wrong_machine.get_or_insert(candidate);
+            }
+            CandidateClass::Missing => {}
         }
     }
 
     Resolution {
-        kind: ResolutionKind::Missing,
-        chosen: None,
+        kind: if first_wrong_machine.is_some() {
+            ResolutionKind::BadImage
+        } else {
+            ResolutionKind::Missing
+        },
+        chosen: first_wrong_machine,
         candidates,
     }
 }
 
-fn resolve_absolute(path: &Path, candidates: &mut Vec<CandidateResult>) -> Resolution {
-    let kind = classify_candidate(path);
-    let token = match kind {
-        ResolutionKind::Found => "HIT",
-        ResolutionKind::Missing => "MISS",
-        ResolutionKind::BadImage => "BAD_IMAGE",
-    };
+fn resolve_absolute(
+    path: &Path,
+    machine: MachineType,
+    candidates: &mut Vec<CandidateResult>,
+) -> Resolution {
+    let class = classify_candidate(path, machine);
     candidates.push(CandidateResult {
         order: 1,
         path: path.to_path_buf(),
-        result: token,
+        result: class.as_token(),
     });
 
-    match kind {
-        ResolutionKind::Found => Resolution {
-            kind: ResolutionKind::Found,
-            chosen: Some(path.to_path_buf()),
-            candidates: candidates.clone(),
-        },
-        ResolutionKind::BadImage => Resolution {
-            kind: ResolutionKind::BadImage,
-            chosen: Some(path.to_path_buf()),
-            candidates: candidates.clone(),
-        },
-        ResolutionKind::Missing => Resolution {
-            kind: ResolutionKind::Missing,
-            chosen: None,
-            candidates: candidates.clone(),
-        },
+    let (kind, chosen) = match class {
+        CandidateClass::Found => (ResolutionKind::Found, Some(path.to_path_buf())),
+        CandidateClass::BadImage | CandidateClass::WrongMachine => {
+            (ResolutionKind::BadImage, Some(path.to_path_buf()))
+        }
+        CandidateClass::Missing => (ResolutionKind::Missing, None),
+    };
+    Resolution {
+        kind,
+        chosen,
+        candidates: candidates.clone(),
     }
 }
 
-fn classify_candidate(path: &Path) -> ResolutionKind {
+fn classify_candidate(path: &Path, machine: MachineType) -> CandidateClass {
     if !path.exists() {
-        return ResolutionKind::Missing;
+        return CandidateClass::Missing;
     }
-    if pe::is_probably_pe_file(path) {
-        ResolutionKind::Found
-    } else {
-        ResolutionKind::BadImage
+    let Ok(data) = std::fs::read(path) else {
+        return CandidateClass::BadImage;
+    };
+    match pe::is_loadable_by(&data, machine) {
+        Ok(true) => CandidateClass::Found,
+        Ok(false) => CandidateClass::WrongMachine,
+        Err(_) => CandidateClass::BadImage,
+    }
+}
+
+/// Maps `dir` to its WOW64 view when it is `native_dir` or a subdirectory.
+fn redirect_system_dir(dir: &Path, native_dir: &Path, wow64_dir: &Path) -> PathBuf {
+    let native = normalize_cmp(native_dir);
+    let lower = normalize_cmp(dir);
+    match lower.strip_prefix(&native) {
+        Some(rest) if rest.is_empty() || rest.starts_with('\\') => {
+            let original = dir.as_os_str().to_string_lossy().replace('/', "\\");
+            // ASCII lowercasing keeps byte offsets aligned with the original.
+            let tail = original[native.len()..].trim_end_matches('\\');
+            PathBuf::from(format!("{}{tail}", wow64_dir.display()))
+        }
+        _ => dir.to_path_buf(),
     }
 }
 
@@ -214,12 +270,16 @@ fn dedup_case_insensitive(paths: Vec<PathBuf>) -> Vec<PathBuf> {
 }
 
 fn normalize_cmp(path: &Path) -> String {
-    path.as_os_str().to_string_lossy().to_ascii_lowercase()
+    path.as_os_str()
+        .to_string_lossy()
+        .replace('/', "\\")
+        .to_ascii_lowercase()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{resolve_dll, ResolutionKind, SearchContext};
+    use super::{redirect_system_dir, resolve_dll, ResolutionKind, SearchContext};
+    use crate::pe::MachineType;
     use std::fs;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -293,6 +353,7 @@ mod tests {
             system_dir,
             windows_dir,
             system16_dir: None,
+            machine: MachineType::X64,
         }
     }
 
@@ -317,6 +378,7 @@ mod tests {
             system_dir: PathBuf::from(r"C:\Windows\System32"),
             windows_dir: PathBuf::from(r"C:\Windows"),
             system16_dir: system16_dir.map(PathBuf::from),
+            machine: MachineType::X64,
         }
     }
 
@@ -428,6 +490,7 @@ mod tests {
             system_dir: PathBuf::from(r"C:\Windows\System32"),
             windows_dir: PathBuf::from(r"C:\Windows"),
             system16_dir: None,
+            machine: MachineType::X64,
         });
         assert_eq!(
             got,
@@ -531,5 +594,186 @@ mod tests {
         assert_eq!(resolution.candidates[0].result, "MISS");
 
         let _ = fs::remove_dir_all(temp);
+    }
+
+    fn write_pe_with_machine(path: &std::path::Path, machine: u16) {
+        let mut bytes = build_valid_pe();
+        write_u16(&mut bytes, PE_OFFSET + 4, machine);
+        fs::write(path, bytes).expect("failed to write PE");
+    }
+
+    const MACHINE_X86: u16 = 0x014C;
+    const MACHINE_X64: u16 = 0x8664;
+
+    fn results(resolution: &super::Resolution) -> Vec<&'static str> {
+        resolution.candidates.iter().map(|c| c.result).collect()
+    }
+
+    #[test]
+    fn wrong_machine_candidate_does_not_stop_the_search() {
+        let app = unique_temp_dir("wm-app");
+        let path_dir = unique_temp_dir("wm-path");
+        write_pe_with_machine(&app.join("dep.dll"), MACHINE_X64);
+        write_pe_with_machine(&path_dir.join("dep.dll"), MACHINE_X86);
+
+        let mut context = temp_context(app.clone(), app.clone(), vec![path_dir.clone()], true);
+        context.machine = MachineType::X86;
+        let resolution = resolve_dll("dep.dll", &context);
+
+        assert!(matches!(resolution.kind, ResolutionKind::Found));
+        assert_eq!(resolution.chosen, Some(path_dir.join("dep.dll")));
+        let got = results(&resolution);
+        assert_eq!(got.first(), Some(&"WRONG_MACHINE"));
+        assert_eq!(got.last(), Some(&"HIT"));
+    }
+
+    #[test]
+    fn only_wrong_machine_candidates_resolve_as_bad_image() {
+        let app = unique_temp_dir("wm-only");
+        write_pe_with_machine(&app.join("dep.dll"), MACHINE_X86);
+
+        let context = temp_context(app.clone(), app.clone(), Vec::new(), true);
+        let resolution = resolve_dll("dep.dll", &context);
+
+        assert!(matches!(resolution.kind, ResolutionKind::BadImage));
+        assert_eq!(resolution.chosen, Some(app.join("dep.dll")));
+        assert_eq!(results(&resolution).first(), Some(&"WRONG_MACHINE"));
+    }
+
+    #[test]
+    fn absolute_wrong_machine_path_resolves_as_bad_image() {
+        let app = unique_temp_dir("wm-abs");
+        let dll = app.join("dep.dll");
+        write_pe_with_machine(&dll, MACHINE_X86);
+
+        let context = temp_context(app.clone(), app.clone(), Vec::new(), true);
+        let resolution = resolve_dll(&dll.to_string_lossy(), &context);
+
+        assert!(matches!(resolution.kind, ResolutionKind::BadImage));
+        assert_eq!(results(&resolution), vec!["WRONG_MACHINE"]);
+    }
+
+    #[test]
+    fn corrupt_candidate_still_stops_the_search() {
+        let app = unique_temp_dir("wm-corrupt");
+        let path_dir = unique_temp_dir("wm-corrupt-path");
+        fs::write(app.join("dep.dll"), b"not a pe").expect("failed to write corrupt DLL");
+        write_pe_with_machine(&path_dir.join("dep.dll"), MACHINE_X64);
+
+        let context = temp_context(app.clone(), app.clone(), vec![path_dir], true);
+        let resolution = resolve_dll("dep.dll", &context);
+
+        assert!(matches!(resolution.kind, ResolutionKind::BadImage));
+        assert_eq!(resolution.chosen, Some(app.join("dep.dll")));
+    }
+
+    fn redirect(dir: &str) -> PathBuf {
+        redirect_system_dir(
+            &PathBuf::from(dir),
+            &PathBuf::from(r"C:\Windows\system32"),
+            &PathBuf::from(r"C:\Windows\SysWOW64"),
+        )
+    }
+
+    #[test]
+    fn redirect_system_dir_maps_directory_and_children_case_insensitively() {
+        assert_eq!(
+            redirect(r"C:\WINDOWS\System32"),
+            PathBuf::from(r"C:\Windows\SysWOW64")
+        );
+        assert_eq!(
+            redirect(r"c:\windows\system32\"),
+            PathBuf::from(r"C:\Windows\SysWOW64")
+        );
+        assert_eq!(
+            redirect(r"C:\Windows\System32\Wbem"),
+            PathBuf::from(r"C:\Windows\SysWOW64\Wbem")
+        );
+    }
+
+    #[test]
+    fn redirect_system_dir_maps_forward_and_mixed_separators() {
+        for dir in [
+            "C:/WINDOWS/System32/Wbem/",
+            r"C:\Windows\System32/Wbem",
+            r"C:/Windows/System32\Wbem",
+        ] {
+            assert_eq!(redirect(dir), PathBuf::from(r"C:\Windows\SysWOW64\Wbem"));
+        }
+        assert_eq!(
+            redirect("C:/Windows/System32/"),
+            PathBuf::from(r"C:\Windows\SysWOW64")
+        );
+        assert_eq!(
+            redirect("C:/Windows/System32Extra/Wbem"),
+            PathBuf::from("C:/Windows/System32Extra/Wbem")
+        );
+    }
+
+    #[test]
+    fn wow64_redirection_resolves_dependency_from_forward_slash_path() {
+        let temp = unique_temp_dir("wow64-forward-slash");
+        let app = temp.join("app");
+        let native = temp.join("System32");
+        let wow64 = temp.join("SysWOW64");
+        for dir in [&app, &native.join("Extra"), &wow64.join("Extra")] {
+            fs::create_dir_all(dir).expect("failed to create search directory");
+        }
+        write_pe_with_machine(&native.join("Extra\\dep.dll"), MACHINE_X64);
+        let expected = wow64.join("Extra\\dep.dll");
+        write_pe_with_machine(&expected, MACHINE_X86);
+        let path_dir = PathBuf::from(native.join("Extra").to_string_lossy().replace('\\', "/"));
+        let mut context = temp_context(app.clone(), app, vec![path_dir], true);
+        context.machine = MachineType::X86;
+        context.system_dir = native;
+        context.apply_wow64_redirection(&wow64);
+
+        let resolution = resolve_dll("dep.dll", &context);
+
+        assert!(matches!(resolution.kind, ResolutionKind::Found));
+        assert_eq!(resolution.chosen, Some(expected));
+        assert_eq!(results(&resolution).last(), Some(&"HIT"));
+        let _ = fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn redirect_system_dir_leaves_other_directories_alone() {
+        assert_eq!(redirect(r"C:\App"), PathBuf::from(r"C:\App"));
+        assert_eq!(
+            redirect(r"C:\Windows\System32Extra"),
+            PathBuf::from(r"C:\Windows\System32Extra")
+        );
+    }
+
+    #[test]
+    fn wow64_redirection_rewrites_and_dedups_search_roots() {
+        let mut context = SearchContext {
+            app_dir: PathBuf::from(r"C:\App"),
+            cwd: PathBuf::from(r"C:\Windows\System32"),
+            path_dirs: vec![
+                PathBuf::from(r"C:\Windows\System32"),
+                PathBuf::from("C:/Windows/SysWOW64"),
+                PathBuf::from(r"C:\Windows\System32\Wbem"),
+                PathBuf::from("C:/Windows/System32/Wbem"),
+                PathBuf::from(r"C:\Tools"),
+            ],
+            safedll: true,
+            system_dir: PathBuf::from(r"C:\Windows\System32"),
+            windows_dir: PathBuf::from(r"C:\Windows"),
+            system16_dir: None,
+            machine: MachineType::X86,
+        };
+        context.apply_wow64_redirection(&PathBuf::from(r"C:\Windows\SysWOW64"));
+
+        assert_eq!(
+            ordered_root_strings(context),
+            vec![
+                r"C:\App",
+                r"C:\Windows\SysWOW64",
+                r"C:\Windows",
+                r"C:\Windows\SysWOW64\Wbem",
+                r"C:\Tools",
+            ]
+        );
     }
 }

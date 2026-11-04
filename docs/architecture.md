@@ -1,6 +1,6 @@
 # loadwhat Architecture Overview
 
-`loadwhat` is a **Windows x64 DLL loading diagnostics CLI** — it answers "what DLL broke process startup, and why?" using Win32 debug APIs directly (no DbgEng dependency).
+`loadwhat` is a **Windows x64 DLL loading diagnostics CLI** for x64 and WOW64 x86 targets — it answers "what DLL broke process startup, and why?" using Win32 debug APIs directly (no DbgEng dependency).
 
 ---
 

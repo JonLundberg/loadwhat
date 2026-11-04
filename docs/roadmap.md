@@ -15,6 +15,11 @@ Authoritative current behavior is defined by `docs/loadwhat_spec_v2.md`.
   - fixture-backed and Hyper-V-isolated Windows container test coverage for
     real HKCU/HKLM and 32/64-bit registry views
 
+- x86 target support (32-bit process on 64-bit Windows under WOW64; contract:
+  `docs/loadwhat_spec_v1.md`):
+  - `run`, `imports`, and the COM dependency walk model the x86 loader
+  - loader-snaps enable via the 32-bit PEB
+
 ## Not implemented (candidate future work)
 
 - Post-V2 candidate COM work:
@@ -27,10 +32,6 @@ Authoritative current behavior is defined by `docs/loadwhat_spec_v2.md`.
 - quiet output mode (`--quiet`)
 - a distinct public timeout result that replaces the v1 compatibility behavior
   of `SUCCESS status=0` after runtime module-load progress
-- WOW64 target support (32-bit process on 64-bit Windows):
-  - parse x86 PE imports and resolve with the same v1 search order
-  - support loader-snaps enable via PEB32 and/or correct IFEO handling
-  - use `NtQueryInformationProcess(ProcessWow64Information)` and `PEB32->NtGlobalFlag` offset `0x68`
 
 ## Explicitly removed / out of scope
 

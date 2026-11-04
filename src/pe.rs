@@ -2,7 +2,13 @@
 
 use std::collections::BTreeSet;
 use std::fs;
+use std::io::Read;
 use std::path::Path;
+
+const HEADER_PROBE_BYTES: u64 = 4096;
+const COR20_FLAGS_OFFSET: usize = 16;
+const COMIMAGE_FLAGS_ILONLY: u32 = 0x0000_0001;
+const COMIMAGE_FLAGS_32BITREQUIRED: u32 = 0x0000_0002;
 
 #[derive(Clone, Copy)]
 struct Section {
@@ -36,20 +42,61 @@ pub fn direct_imports(module_path: &Path) -> Result<Vec<String>, String> {
     direct_imports_from_bytes(&data)
 }
 
-pub fn is_probably_pe_file(module_path: &Path) -> bool {
-    let Ok(data) = fs::read(module_path) else {
-        return false;
-    };
-    parse_pe_layout(&data).is_ok()
-}
-
 pub fn machine_type_from_bytes(data: &[u8]) -> Result<MachineType, String> {
     let pe = parse_pe_layout(data)?;
-    Ok(match pe.machine {
-        0x8664 => MachineType::X64,
-        0x014C => MachineType::X86,
-        _ => MachineType::Unknown,
+    Ok(pe.machine_type())
+}
+
+/// Architecture of the process that loads `module_path` as its root image.
+/// Differs from the COFF machine for AnyCPU .NET images, which carry an x86
+/// header but run as 64-bit processes. Unreadable images yield `Unknown`.
+pub fn target_machine(module_path: &Path) -> MachineType {
+    fs::read(module_path)
+        .ok()
+        .and_then(|data| target_machine_from_bytes(&data).ok())
+        .unwrap_or(MachineType::Unknown)
+}
+
+fn target_machine_from_bytes(data: &[u8]) -> Result<MachineType, String> {
+    let pe = parse_pe_layout(data)?;
+    Ok(if pe.is_any_cpu(data) {
+        MachineType::X64
+    } else {
+        pe.machine_type()
     })
+}
+
+/// File-based form of [`is_loadable_by`] for images already observed by the
+/// debugger. Unreadable or invalid files are not rejected. The header alone
+/// settles the common case; only a machine mismatch needs the whole image,
+/// because the CLR header that marks AnyCPU images lives in a section.
+pub fn is_file_loadable_by(module_path: &Path, process: MachineType) -> bool {
+    let header = fs::File::open(module_path).ok().and_then(|file| {
+        let mut buffer = Vec::new();
+        file.take(HEADER_PROBE_BYTES)
+            .read_to_end(&mut buffer)
+            .ok()
+            .map(|_| buffer)
+    });
+    if header.is_some_and(|data| machine_type_from_bytes(&data) == Ok(process)) {
+        return true;
+    }
+    fs::read(module_path)
+        .ok()
+        .and_then(|data| is_loadable_by(&data, process).ok())
+        .unwrap_or(true)
+}
+
+/// Whether a process of architecture `process` can load the image in `data`.
+/// `Err` means the file is not a valid PE image. Unknown machines are assumed
+/// compatible because the tool has no basis for rejecting them.
+pub fn is_loadable_by(data: &[u8], process: MachineType) -> Result<bool, String> {
+    let pe = parse_pe_layout(data)?;
+    let image = pe.machine_type();
+    Ok(image == MachineType::Unknown
+        || process == MachineType::Unknown
+        || image == process
+        || pe.is_any_cpu(data))
 }
 
 pub(crate) fn direct_imports_from_bytes(data: &[u8]) -> Result<Vec<String>, String> {
@@ -96,8 +143,32 @@ pub(crate) fn direct_imports_from_bytes(data: &[u8]) -> Result<Vec<String>, Stri
 struct PeLayout {
     import_rva: u32,
     resource_rva: u32,
+    clr_rva: u32,
     machine: u16,
     sections: Vec<Section>,
+}
+
+impl PeLayout {
+    fn machine_type(&self) -> MachineType {
+        match self.machine {
+            0x8664 => MachineType::X64,
+            0x014C => MachineType::X86,
+            _ => MachineType::Unknown,
+        }
+    }
+
+    /// True for IL-only .NET images with an x86 header that do not require a
+    /// 32-bit process; both x86 and x64 processes load these.
+    fn is_any_cpu(&self, data: &[u8]) -> bool {
+        if self.machine_type() != MachineType::X86 || self.clr_rva == 0 {
+            return false;
+        }
+        rva_to_offset(self.clr_rva, &self.sections)
+            .and_then(|off| read_u32(data, off + COR20_FLAGS_OFFSET).ok())
+            .is_some_and(|flags| {
+                flags & COMIMAGE_FLAGS_ILONLY != 0 && flags & COMIMAGE_FLAGS_32BITREQUIRED == 0
+            })
+    }
 }
 
 fn parse_pe_layout(data: &[u8]) -> Result<PeLayout, String> {
@@ -148,6 +219,12 @@ fn parse_pe_layout(data: &[u8]) -> Result<PeLayout, String> {
     } else {
         0
     };
+    // CLR runtime header is data directory index 14.
+    let clr_rva = if data_dir_start + 120 <= optional_header_off + size_of_optional_header {
+        read_u32(data, data_dir_start + 112)?
+    } else {
+        0
+    };
     let machine = read_u16(data, pe_offset + 4)?;
     let section_table_off = optional_header_off + size_of_optional_header;
     let section_table_len = number_of_sections
@@ -176,6 +253,7 @@ fn parse_pe_layout(data: &[u8]) -> Result<PeLayout, String> {
     Ok(PeLayout {
         import_rva,
         resource_rva,
+        clr_rva,
         machine,
         sections,
     })
@@ -693,5 +771,106 @@ mod tests {
                 "z.dll".to_string(),
             ]
         );
+    }
+
+    const MACHINE_X86: u16 = 0x014C;
+    const CLR_DIRECTORY_OFFSET: usize = testpe::DATA_DIR_START + 112;
+
+    fn x86_pe() -> Vec<u8> {
+        let mut bytes = testpe::build_test_pe(&[]).bytes;
+        testpe::write_u16(&mut bytes, testpe::PE_OFFSET + 4, MACHINE_X86);
+        bytes
+    }
+
+    /// x86-header image with a CLR runtime header carrying `cor_flags`.
+    fn managed_pe(cor_flags: u32) -> Vec<u8> {
+        let mut bytes = x86_pe();
+        let section_size = 0x40u32;
+        bytes.resize(
+            testpe::SECTION_RAW_DATA_PTR as usize + section_size as usize,
+            0,
+        );
+        testpe::write_u32(&mut bytes, testpe::SECTION_TABLE_OFFSET + 8, section_size);
+        testpe::write_u32(&mut bytes, testpe::SECTION_TABLE_OFFSET + 16, section_size);
+        testpe::write_u32(
+            &mut bytes,
+            CLR_DIRECTORY_OFFSET,
+            testpe::SECTION_VIRTUAL_ADDRESS,
+        );
+        testpe::write_u32(
+            &mut bytes,
+            testpe::SECTION_RAW_DATA_PTR as usize + 16,
+            cor_flags,
+        );
+        bytes
+    }
+
+    #[test]
+    fn target_machine_follows_coff_machine_for_native_images() {
+        let x64 = testpe::build_test_pe(&[]).bytes;
+
+        assert_eq!(target_machine_from_bytes(&x64), Ok(MachineType::X64));
+        assert_eq!(target_machine_from_bytes(&x86_pe()), Ok(MachineType::X86));
+    }
+
+    #[test]
+    fn target_machine_runs_any_cpu_managed_image_as_x64() {
+        assert_eq!(
+            target_machine_from_bytes(&managed_pe(0x0000_0001)),
+            Ok(MachineType::X64)
+        );
+    }
+
+    #[test]
+    fn target_machine_keeps_32bit_required_managed_image_as_x86() {
+        for flags in [0x0000_0003, 0x0002_0003] {
+            assert_eq!(
+                target_machine_from_bytes(&managed_pe(flags)),
+                Ok(MachineType::X86)
+            );
+        }
+    }
+
+    #[test]
+    fn is_loadable_by_rejects_other_native_architecture() {
+        let x64 = testpe::build_test_pe(&[]).bytes;
+
+        assert_eq!(is_loadable_by(&x64, MachineType::X64), Ok(true));
+        assert_eq!(is_loadable_by(&x64, MachineType::X86), Ok(false));
+        assert_eq!(is_loadable_by(&x86_pe(), MachineType::X86), Ok(true));
+        assert_eq!(is_loadable_by(&x86_pe(), MachineType::X64), Ok(false));
+    }
+
+    #[test]
+    fn is_loadable_by_accepts_any_cpu_image_in_both_architectures() {
+        let image = managed_pe(0x0000_0001);
+
+        assert_eq!(is_loadable_by(&image, MachineType::X64), Ok(true));
+        assert_eq!(is_loadable_by(&image, MachineType::X86), Ok(true));
+    }
+
+    #[test]
+    fn is_loadable_by_rejects_32bit_required_image_in_x64_process() {
+        let image = managed_pe(0x0000_0003);
+
+        assert_eq!(is_loadable_by(&image, MachineType::X64), Ok(false));
+        assert_eq!(is_loadable_by(&image, MachineType::X86), Ok(true));
+    }
+
+    #[test]
+    fn is_loadable_by_treats_unknown_machines_as_compatible() {
+        let mut arm = testpe::build_test_pe(&[]).bytes;
+        testpe::write_u16(&mut arm, testpe::PE_OFFSET + 4, 0x01C4);
+
+        assert_eq!(is_loadable_by(&arm, MachineType::X86), Ok(true));
+        assert_eq!(
+            is_loadable_by(&testpe::build_test_pe(&[]).bytes, MachineType::Unknown),
+            Ok(true)
+        );
+    }
+
+    #[test]
+    fn is_loadable_by_reports_invalid_images() {
+        assert!(is_loadable_by(b"not a pe", MachineType::X64).is_err());
     }
 }

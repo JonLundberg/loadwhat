@@ -10,6 +10,9 @@ use crate::{loader_snaps, win};
 
 const STATUS_BREAKPOINT: u32 = 0x8000_0003;
 const STATUS_SINGLE_STEP: u32 = 0x8000_0004;
+// The 32-bit loader of a WOW64 target reports its own debugger breakpoints.
+const STATUS_WX86_SINGLE_STEP: u32 = 0x4000_001E;
+const STATUS_WX86_BREAKPOINT: u32 = 0x4000_001F;
 const TERMINATION_DRAIN_TIMEOUT_MS: u128 = 5_000;
 
 #[derive(Clone)]
@@ -243,7 +246,13 @@ pub fn run_target(
             win::EXCEPTION_DEBUG_EVENT => {
                 let info = unsafe { event_data::<win::ExceptionDebugInfo>(&event) };
                 let code = info.exception_record.exception_code;
-                if code == STATUS_BREAKPOINT || code == STATUS_SINGLE_STEP {
+                if matches!(
+                    code,
+                    STATUS_BREAKPOINT
+                        | STATUS_SINGLE_STEP
+                        | STATUS_WX86_BREAKPOINT
+                        | STATUS_WX86_SINGLE_STEP
+                ) {
                     continue_status = win::DBG_CONTINUE;
                 } else {
                     if info.dw_first_chance == 0 {
@@ -730,6 +739,41 @@ mod tests {
         assert!(
             debug_count > 0,
             "expected at least one DEBUG_STRING event with loader-snaps enabled"
+        );
+    }
+
+    #[test]
+    fn run_target_enables_loader_snaps_in_wow64_target() {
+        let _lock = TEST_ENV_LOCK.lock().expect("test env lock poisoned");
+        let _peb_guard = EnvVarGuard::remove("LOADWHAT_TEST_PEB_ENABLE");
+        let _force_unreadable_guard =
+            EnvVarGuard::remove("LOADWHAT_TEST_FORCE_UNREADABLE_DEBUG_STRING");
+        let windir = std::env::var_os("WINDIR").expect("WINDIR should be set on Windows");
+        let exe = PathBuf::from(windir).join("SysWOW64").join("cmd.exe");
+        assert!(exe.exists(), "expected {} to exist", exe.display());
+
+        let args = vec![
+            OsString::from("/C"),
+            OsString::from("exit"),
+            OsString::from("0"),
+        ];
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let outcome = match run_target(&exe, &args, Some(&cwd), 10_000, true) {
+            Ok(value) => value,
+            Err(_) => panic!("run_target failed for WOW64 target"),
+        };
+
+        assert_eq!(outcome.exit_code, Some(0));
+        let info = outcome
+            .loader_snaps_peb
+            .expect("PEB enable should have succeeded");
+        assert_eq!(info.ntglobalflag_offset, 0x68);
+        assert!(
+            outcome.runtime_events.iter().any(|event| matches!(
+                event,
+                RuntimeEvent::DebugString(value) if value.text.contains("LdrpInitializeProcess")
+            )),
+            "expected 32-bit loader snaps in debug strings"
         );
     }
 }

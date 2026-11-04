@@ -116,3 +116,6 @@ mod static_wrong_pick;
 #[cfg(all(windows, feature = "harness-tests"))]
 #[path = "integration/verbose_static_and_dynamic.rs"]
 mod verbose_static_and_dynamic;
+#[cfg(all(windows, feature = "harness-tests"))]
+#[path = "integration/x86_targets.rs"]
+mod x86_targets;

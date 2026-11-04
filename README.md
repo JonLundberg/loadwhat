@@ -1,6 +1,6 @@
 # loadwhat
 
-`loadwhat` is a Windows x64 CLI for diagnosing DLL loading failures. It offers static analysis, similar to Dependency Walker. It also provides dynamic analysis by enabling loader snaps **without** admin privileges when the process-local PEB path succeeds.
+`loadwhat` is a Windows x64 CLI for diagnosing DLL loading failures in x64 programs and in x86 programs running under WOW64. It offers static analysis, similar to Dependency Walker. It also provides dynamic analysis by enabling loader snaps **without** admin privileges when the process-local PEB path succeeds.
 
 The primary use case for loadwhat is diagnosing a dll loading issue in an environment where you do not have your development and debug tools installed. 
 
@@ -71,9 +71,11 @@ target\release\loadwhat.exe
 
 `run` Phase B performs direct import diagnosis and an always-on recursive missing-dependency walk (transitive missing detection).
 
+For x86 targets, `run`, `imports`, and the COM dependency walk search `SysWOW64` instead of `System32`. For any target, a DLL of the wrong architecture is skipped as the Windows loader skips it (`SEARCH_PATH ... result="WRONG_MACHINE"`) and is reported as `STATIC_BAD_IMAGE` only when no compatible copy is found.
+
 By default, `loadwhat` enables loader-snaps Phase C and can heuristically infer handled dynamic `LoadLibrary*` failures from loader-snaps debug strings and emit `DYNAMIC_MISSING`. Use `--no-loader-snaps` to disable that phase. When multiple dynamic-failure candidates are observed in one run, `loadwhat` prefers the earliest unresolved app-relevant failure and ignores candidates for DLLs that later load successfully. See `docs/loadwhat_spec_v1.md` for the authoritative selection rules.
 Loader-snaps setup uses best-effort process-local `PEB->NtGlobalFlag` enable
-with the documented x64 offset.
+with the documented x64 offset, or the 32-bit PEB offset for x86 targets.
 Summary mode omits loader-snaps setup and restore notes. Trace mode may emit terminal setup/restore diagnostics, and verbose mode may emit additional fallback-detail notes such as `peb-enable-failed`.
 Phase C currently has no separate post-startup suppression boundary in v1; delayed dynamic load failures can still be diagnosed if they remain the highest-ranked unresolved candidate.
 
