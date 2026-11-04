@@ -10,7 +10,7 @@ flowchart TD
 
     LS_SETUP --> PEB_TRY[Try PEB write\nNtGlobalFlag &= FLG_SHOW_LDR_SNAPS]
     PEB_TRY -->|success| PHASE_A
-    PEB_TRY -->|WOW64 target| WOW64[exit 22]
+    PEB_TRY -->|non-x86 WOW64 guest| WOW64[exit 22]
     PEB_TRY -->|fail| IFEO_TRY[Try IFEO registry fallback]
     IFEO_TRY -->|success| PHASE_A
     IFEO_TRY -->|fail| PHASE_A
@@ -162,7 +162,7 @@ sequenceDiagram
     participant OS as Windows Loader
 
     LC->>LC: Check target architecture
-    alt WOW64 target
+    alt non-x86 WOW64 guest
         LC-->>LC: emit NOTE wow64-target-unsupported
         LC-->>LC: exit 22
     end

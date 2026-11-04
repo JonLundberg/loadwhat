@@ -92,9 +92,7 @@ impl ComLookupResult {
             return true;
         }
         match &self.server {
-            Some(validation) => {
-                !matches!(validation.status, ServerStatus::Ok | ServerStatus::Skipped)
-            }
+            Some(validation) => validation.status != ServerStatus::Ok,
             None => false,
         }
     }
@@ -528,12 +526,6 @@ impl<'a> ComResolver<'a> {
             }
         }
 
-        // The v1 dependency walk models the x64 loader; walking an x86 image
-        // with x64 search semantics would fabricate results.
-        if machine == MachineType::X86 {
-            return Ok(done(ServerStatus::Skipped, Some(machine)));
-        }
-
         let walk = self
             .fs
             .walk_dependencies(path, context)
@@ -709,10 +701,7 @@ impl<'a> ComResolver<'a> {
             lookup.status.as_token()
         } else {
             match &lookup.server {
-                Some(validation) => match validation.status {
-                    ServerStatus::Ok | ServerStatus::Skipped => "OK",
-                    other => other.as_token(),
-                },
+                Some(validation) => validation.status.as_token(),
                 None => "OK",
             }
         };
@@ -810,10 +799,7 @@ impl<'a> ComResolver<'a> {
             Some(target_machine),
             dependency_context,
         )?;
-        let status = match validation.status {
-            ServerStatus::Ok | ServerStatus::Skipped => "OK",
-            other => other.as_token(),
-        };
+        let status = validation.status.as_token();
 
         Ok(ComAuditResult {
             target_machine,
@@ -1680,7 +1666,7 @@ mod tests {
 
         assert!(!result.is_issue());
         let server = result.server.unwrap();
-        assert_eq!(server.status, ServerStatus::Skipped);
+        assert_eq!(server.status, ServerStatus::Ok);
     }
 
     #[test]
@@ -1709,7 +1695,7 @@ mod tests {
 
         assert!(!result.is_issue());
         let server = result.server.unwrap();
-        assert_eq!(server.status, ServerStatus::Skipped);
+        assert_eq!(server.status, ServerStatus::Ok);
         assert_eq!(
             server.redirected_path.as_deref(),
             Some(r"C:\TESTWIN\SysWOW64\srv.dll")

@@ -332,7 +332,7 @@ pub enum RunError {
 ### Main responsibilities
 
 - Enable loader snaps in a newly created target process by writing `FLG_SHOW_LDR_SNAPS` into the target PEB `NtGlobalFlag`.
-- Detect unsupported WOW64 targets for the current v1 flow.
+- Detect WOW64 targets: x86 guests use the 32-bit PEB, any other guest is unsupported.
 - Fall back to IFEO registry-based loader-snaps enablement when `main.rs` chooses that path.
 - Preserve and restore the previous IFEO `GlobalFlag` value through an RAII guard.
 
@@ -615,7 +615,7 @@ Representative responsibilities:
   - `get_system_directory() -> Result<PathBuf, String>`
   - `get_windows_directory() -> Result<PathBuf, String>`
   - `rtl_get_version() -> Option<OsVersion>`
-  - `is_wow64_process_best_effort(...) -> Result<bool, u32>`
+  - `wow64_guest_machine(...) -> Result<Option<u16>, u32>`
   - `final_path_from_handle(...) -> Option<PathBuf>`
 
 `win.rs` also exposes a `TEST_ENV_LOCK` mutex used by tests that manipulate process-wide environment variables.
@@ -765,7 +765,7 @@ loadwhat run --trace <TARGET> [TARGET_ARGS...]
 Trace mode emits diagnostic search details when a failure is diagnosed. Depending on the failure type and verbosity, relevant tokens can include:
 
 - `SEARCH_ORDER safedll=0|1`
-- `SEARCH_PATH dll="..." order=N path="..." result="MISS|HIT|BAD_IMAGE"`
+- `SEARCH_PATH dll="..." order=N path="..." result="MISS|HIT|BAD_IMAGE|WRONG_MACHINE"`
 - `STATIC_MISSING ...`
 - `STATIC_BAD_IMAGE ...`
 - `DYNAMIC_MISSING ...`

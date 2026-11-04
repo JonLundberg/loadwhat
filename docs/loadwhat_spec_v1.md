@@ -1,6 +1,6 @@
 # loadwhat v1 Spec (`run` / `imports` contract)
 
-Purpose: a single-exe, x64 Rust CLI that answers "what broke first during process startup?" for DLL loading (static first), using Win32 debug APIs directly (no DbgEng).
+Purpose: a single-exe, x64 Rust CLI that answers "what broke first during process startup?" for DLL loading (static first), using Win32 debug APIs directly (no DbgEng). It diagnoses x64 targets and x86 targets running under WOW64.
 
 Output is line-oriented and greppable:
 
@@ -95,7 +95,7 @@ Static diagnosis is attempted only when startup appears to have failed early, ba
 Behavior:
 
 - Parse direct imports of the target image. Additionally, perform an always-on recursive missing-dependency walk over the import graph of any found modules (see "Recursive missing-dependency walk (v1)" below).
-- Compare imports with modules observed in Phase A.
+- Compare imports with modules observed in Phase A. Only modules the target architecture can load (§4) count as observed: `LOAD_DLL_DEBUG_EVENT` also fires for the native modules of a WOW64 process and for wrong-architecture DLLs the loader maps and then rejects. These still appear as `RUNTIME_LOADED`, and `SUMMARY runtime_loaded` still counts them.
 - Resolve missing candidates with the fixed v1 search order.
 - If static missing or bad image is diagnosed:
   - summary mode: emit exactly one line, `STATIC_MISSING` or `STATIC_BAD_IMAGE`.
@@ -192,7 +192,7 @@ When loader-snaps is enabled (the default for `run`; disable with `--no-loader-s
 1. Preferred: enable `FLG_SHOW_LDR_SNAPS` (`0x00000002`) process-locally by setting `PEB->NtGlobalFlag |= 0x2`.
 2. Fallback: set IFEO `GlobalFlag` under
    `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\<ImageName>\GlobalFlag`
-   and restore original value afterward.
+   and restore original value afterward. For an x86 target this key is written in the 32-bit registry view (`KEY_WOW64_32KEY`), which is the view a 32-bit process reads.
 
 Restoration is best effort for all normal terminal paths. The fallback changes
 machine-wide IFEO state and an abrupt debugger termination (for example,
@@ -203,18 +203,21 @@ restoration. Operators that cannot accept this risk must use
 ### Determining `PEB->NtGlobalFlag` address (v1)
 
 - Detect Windows `major.minor.build` using `RtlGetVersion` (not `GetVersionEx`).
-- v1 is x64-only:
-  - If the target is WOW64, treat as unsupported (exit code `22`) and emit a `NOTE` that WOW64 target support is roadmap-only.
+- Determine the target architecture from the process with `IsWow64Process2`, falling back to `IsWow64Process`.
 - For x64 target:
   - Read `PebBaseAddress` from `NtQueryInformationProcess(ProcessBasicInformation)`.
   - Select `NtGlobalFlagOffset` using detected OS version where possible.
   - Best-effort rule: if OS detection fails or is unknown, still attempt using the default x64 offset.
-- Offset statement for x64 v1:
-  - `NtGlobalFlagOffset = 0xBC` for Windows 10/11 family (`major >= 10`).
-  - If OS version is unknown, still attempt `0xBC`.
+- For x86 target under WOW64:
+  - Read the 32-bit PEB address from `NtQueryInformationProcess(ProcessWow64Information)`.
+  - Set the flag in the 32-bit PEB only. The native PEB is left unchanged so the native WOW64 layer emits no loader-snaps output.
+- Any other WOW64 guest architecture is unsupported (exit code `22`) and emits a `NOTE`.
+- Offset statement:
+  - x64: `NtGlobalFlagOffset = 0xBC` for Windows 10/11 family (`major >= 10`). If OS version is unknown, still attempt `0xBC`.
+  - x86 under WOW64: `NtGlobalFlagOffset = 0x68`.
 - Attempt PEB write first; if it fails, fall back to IFEO as specified above.
 - Recommended verbose note example:
-  - `NOTE topic="loader-snaps" detail="peb-ntglobalflag" os="major.minor.build|unknown" ntglobalflag_offset=0xBC`
+  - `NOTE topic="loader-snaps" detail="peb-ntglobalflag" os="major.minor.build|unknown" ntglobalflag_offset=0xBC|0x68`
 
 Failure behavior:
 
@@ -278,6 +281,17 @@ Safe DLL Search Mode:
 - `safedll=1`: CWD after Windows directory.
 - `safedll=0`: CWD after application directory.
 
+Target architecture:
+- The model is selected by the architecture of the process that runs the root image: the COFF machine type, except that an IL-only .NET image with an x86 header and without `COMIMAGE_FLAGS_32BITREQUIRED` (AnyCPU) runs as x64.
+- For an x86 target, the system directory is `GetSystemWow64DirectoryW`, and the application directory, current directory, and PATH entries at or below the native system directory are rewritten to the matching SysWOW64 location, as WOW64 file-system redirection presents them to a 32-bit process. Roots that become duplicates are removed.
+
+Candidate classification (`SEARCH_PATH result`):
+- `HIT`: a valid image the target architecture can load. The search stops.
+- `MISS`: no file at this path. The search continues.
+- `BAD_IMAGE`: not a valid PE image. The search stops and the DLL is reported as a bad image.
+- `WRONG_MACHINE`: a valid image of the other architecture (x86 versus x64). The search continues, matching the loader. If no later candidate is a `HIT`, the DLL is reported as a bad image (`STATIC_BAD_IMAGE`). An image of any other machine type is not rejected.
+- AnyCPU images are loadable by both x86 and x64 targets.
+
 Additional v1 notes:
 - PATH evaluation uses the process PATH entries in order.
 - The per-application App Paths registry key is not part of DLL search resolution in v1.
@@ -297,6 +311,7 @@ Not modeled in v1:
 - `AddDllDirectory`
 - `LOAD_LIBRARY_SEARCH_*` flag-based search order
 - relative-path `LoadLibrary*` semantics beyond the distinction between absolute-path inputs and basename inputs
+- WOW64 file-system redirection exemptions (for example `System32\drivers\etc`), the `%SystemRoot%\Sysnative` alias, and `Wow64DisableWow64FsRedirection`
 
 When one of the unmodeled behaviors above is likely relevant, emit:
 ```text
@@ -340,11 +355,12 @@ Required token families in v1:
 - `21` = cannot launch/debug target, or non-diagnostic failure without a public
   diagnosis token (including loader-snaps setup failure and timeout before
   meaningful runtime progress); these paths write an explanation to stderr
-- `22` = unsupported architecture
+- `22` = unsupported architecture (a non-64-bit `loadwhat` build, or a WOW64 target whose guest architecture is not x86)
 
 ## 8) Constraints
 
-- Windows-only, x64-only
+- Windows-only
+- `loadwhat.exe` itself is x64-only; targets may be x64, or x86 under WOW64
 - single executable
 - direct Win32 debug APIs
 - no fabricated diagnostics (DLL names/paths/results must come from direct observation or deterministic scan/inference rules above)

@@ -35,7 +35,9 @@ pub const EXIT_PROCESS_DEBUG_EVENT: Dword = 5;
 pub const LOAD_DLL_DEBUG_EVENT: Dword = 6;
 pub const OUTPUT_DEBUG_STRING_EVENT: Dword = 8;
 pub const PROCESS_BASIC_INFORMATION_CLASS: u32 = 0;
+pub const PROCESS_WOW64_INFORMATION_CLASS: u32 = 26;
 pub const IMAGE_FILE_MACHINE_UNKNOWN: u16 = 0;
+pub const IMAGE_FILE_MACHINE_I386: u16 = 0x014C;
 
 pub const HKEY_CURRENT_USER: Hkey = 0x80000001u32 as isize;
 pub const HKEY_LOCAL_MACHINE: Hkey = 0x80000002u32 as isize;
@@ -241,6 +243,7 @@ extern "system" {
     ) -> Dword;
 
     pub fn GetSystemDirectoryW(lp_buffer: Lpwstr, u_size: Uint) -> Uint;
+    pub fn GetSystemWow64DirectoryW(lp_buffer: Lpwstr, u_size: Uint) -> Uint;
     pub fn GetWindowsDirectoryW(lp_buffer: Lpwstr, u_size: Uint) -> Uint;
     pub fn IsWow64Process(h_process: Handle, wow64_process: *mut Bool) -> Bool;
     pub fn GetModuleHandleW(lp_module_name: Lpcwstr) -> Handle;
@@ -355,6 +358,19 @@ pub fn get_system_directory() -> Result<PathBuf, String> {
     Ok(PathBuf::from(utf16_slice_to_string(&buf[..size as usize])))
 }
 
+pub fn get_system_wow64_directory() -> Result<PathBuf, String> {
+    // Size the buffer from the API: unlike GetSystemDirectoryW, this call writes
+    // nothing and reports success when given a 32768-character buffer.
+    let required = unsafe { GetSystemWow64DirectoryW(std::ptr::null_mut(), 0) };
+    let mut buf = vec![0u16; required as usize];
+    let size = unsafe { GetSystemWow64DirectoryW(buf.as_mut_ptr(), required) };
+    if size == 0 || size >= required {
+        let code = unsafe { GetLastError() };
+        return Err(format!("GetSystemWow64DirectoryW failed: 0x{code:08X}"));
+    }
+    Ok(PathBuf::from(utf16_slice_to_string(&buf[..size as usize])))
+}
+
 pub fn get_windows_directory() -> Result<PathBuf, String> {
     let mut buf = vec![0u16; 32768];
     let size = unsafe { GetWindowsDirectoryW(buf.as_mut_ptr(), buf.len() as Uint) };
@@ -443,7 +459,8 @@ pub fn rtl_get_version() -> Option<OsVersion> {
     })
 }
 
-pub fn is_wow64_process_best_effort(process: Handle) -> Result<bool, u32> {
+/// Returns the guest machine of a WOW64 process, or `None` for a native one.
+pub fn wow64_guest_machine(process: Handle) -> Result<Option<u16>, u32> {
     if process.is_null() {
         return Err(ERROR_INVALID_PARAMETER);
     }
@@ -452,15 +469,16 @@ pub fn is_wow64_process_best_effort(process: Handle) -> Result<bool, u32> {
         return Ok(value);
     }
 
+    // Systems without IsWow64Process2 only have x86 as a WOW64 guest on x64.
     let mut wow64: Bool = 0;
     let ok = unsafe { IsWow64Process(process, &mut wow64 as *mut Bool) };
     if ok == 0 {
         return Err(unsafe { GetLastError() });
     }
-    Ok(wow64 != 0)
+    Ok((wow64 != 0).then_some(IMAGE_FILE_MACHINE_I386))
 }
 
-fn try_is_wow64_process2(process: Handle) -> Result<Option<bool>, u32> {
+fn try_is_wow64_process2(process: Handle) -> Result<Option<Option<u16>>, u32> {
     type IsWow64Process2Fn = unsafe extern "system" fn(Handle, *mut u16, *mut u16) -> Bool;
 
     let kernel_name = to_wide(OsStr::new("kernel32.dll"));
@@ -488,16 +506,17 @@ fn try_is_wow64_process2(process: Handle) -> Result<Option<bool>, u32> {
         return Err(unsafe { GetLastError() });
     }
 
-    let is_wow64 = process_machine != IMAGE_FILE_MACHINE_UNKNOWN && native_machine != 0;
-    Ok(Some(is_wow64))
+    Ok(Some(
+        (process_machine != IMAGE_FILE_MACHINE_UNKNOWN).then_some(process_machine),
+    ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        final_path_from_handle, is_wow64_process_best_effort, rtl_get_version,
-        safe_dll_search_mode, to_wide, utf16_slice_to_string, ERROR_INVALID_PARAMETER,
-        INVALID_HANDLE_VALUE, TEST_ENV_LOCK,
+        final_path_from_handle, get_system_directory, get_system_wow64_directory, rtl_get_version,
+        safe_dll_search_mode, to_wide, utf16_slice_to_string, wow64_guest_machine,
+        ERROR_INVALID_PARAMETER, INVALID_HANDLE_VALUE, TEST_ENV_LOCK,
     };
     use crate::test_util::EnvVarGuard;
     use std::ffi::OsStr;
@@ -571,10 +590,22 @@ mod tests {
     }
 
     #[test]
-    fn is_wow64_process_best_effort_rejects_null_handle() {
+    fn wow64_guest_machine_rejects_null_handle() {
         assert_eq!(
-            is_wow64_process_best_effort(std::ptr::null_mut()).err(),
+            wow64_guest_machine(std::ptr::null_mut()).err(),
             Some(ERROR_INVALID_PARAMETER)
         );
+    }
+
+    #[test]
+    fn get_system_wow64_directory_differs_from_system_directory() {
+        let native = get_system_directory().expect("system directory");
+        let wow64 = get_system_wow64_directory().expect("WOW64 system directory");
+
+        assert_ne!(native, wow64);
+        assert!(wow64
+            .to_string_lossy()
+            .to_ascii_lowercase()
+            .ends_with("syswow64"));
     }
 }

@@ -27,7 +27,7 @@ Invoke-LoadWhatCase `
     -Name 'wow64-system32-redirect' `
     -Arguments @('com', 'clsid', '--view', '32', '{7F4D0011-4C57-4A54-9000-000000000011}') `
     -ExpectedExitCode 0 `
-    -ExpectedSummaryPattern '^COM_LOOKUP .*status="REGISTERED" .*hive="HKLM" .*view="32" .*server_status="SKIPPED"$'
+    -ExpectedSummaryPattern '^COM_LOOKUP .*status="REGISTERED" .*hive="HKLM" .*view="32" .*server_status="OK"$'
 
 Invoke-LoadWhatCase `
     -Name 'hkcu-overrides-hklm' `

@@ -17,6 +17,11 @@ pub const DLL_LWTEST_A_INITFAIL: &str = "lwtest_a_initfail.dll";
 pub const DLL_LWTEST_A_NESTED: &str = "lwtest_a_nested.dll";
 pub const DLL_LWTEST_B: &str = "lwtest_b.dll";
 
+/// Name of the 32-bit build of a fixture, relative to the fixture bin root.
+pub fn x86(fixture_name: &str) -> String {
+    format!(r"x86\{fixture_name}")
+}
+
 pub fn fixture_path_from_root(
     fixture_bin_root: &Path,
     fixture_name: &str,

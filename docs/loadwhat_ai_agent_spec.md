@@ -46,6 +46,5 @@ These are roadmap items, not current implementation requirements:
 - JSON output
 - `run --com` / `imports --com` enrichment
 - custom search modes
-- WOW64 target support (32-bit target process handling)
 
 See `docs/roadmap.md` for planned/out-of-scope items.

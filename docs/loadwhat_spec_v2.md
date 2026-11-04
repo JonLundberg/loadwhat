@@ -237,13 +237,9 @@ When the relevant caller is x86, server paths under `%SystemRoot%\System32` are 
 NOTE topic="com" detail="wow64-redirected" path="..."
 ```
 
-### x86 dependency-walk scope
+### x86 dependency walk
 
-The v1 dependency walk models the x64 loader. When the resolved server is a valid x86 image, the transitive dependency walk is skipped rather than producing x64-flavored results:
-
-- `COM_LOOKUP` / `COM_AUDIT` report `server_status="SKIPPED"` (not classified as an issue)
-- `com server` reports `status="OK"` when file existence and image validity passed
-- trace mode reports `NOTE topic="com" detail="out-of-scope" feature="x86-dependency-walk"`
+The dependency walk models the loader of the server image's own architecture, using the target-architecture rules in `docs/loadwhat_spec_v1.md` §4. An x86 server is therefore walked with x86 search semantics (`SysWOW64` as the system directory) and reports `OK` or `SERVER_DEPS_MISSING` like an x64 server. A dependency that exists only as an image of the other architecture is a dependency failure.
 
 ## 7) Token contract
 
@@ -263,7 +259,7 @@ Optional fields:
 - `hive="HKCU|HKLM"`
 - `view="64|32"`
 - `server_kind="InprocServer32|LocalServer32"`
-- `server_status="OK|SERVER_MISSING|SERVER_BAD_IMAGE|SERVER_DEPS_MISSING|BITNESS_MISMATCH|SKIPPED|INDETERMINATE"`
+- `server_status="OK|SERVER_MISSING|SERVER_BAD_IMAGE|SERVER_DEPS_MISSING|BITNESS_MISMATCH|INDETERMINATE"`
 
 `status` is a lookup result. `server_status` is a separate optional server-health result.
 `BITNESS_MISMATCH` applies only to `InprocServer32`.

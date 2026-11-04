@@ -3,6 +3,7 @@
 use std::ffi::OsStr;
 use std::mem;
 
+use crate::pe::MachineType;
 use crate::win;
 
 const FLG_SHOW_LDR_SNAPS: u32 = 0x0000_0002;
@@ -10,6 +11,7 @@ const IFEO_BASE: &str =
     r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options";
 const GLOBAL_FLAG_VALUE: &str = "GlobalFlag";
 const PEB_NT_GLOBAL_FLAG_OFFSET_X64: usize = 0xBC;
+const PEB32_NT_GLOBAL_FLAG_OFFSET: usize = 0x68;
 const ERROR_INVALID_PARAMETER: u32 = 87;
 const ERROR_PARTIAL_COPY: u32 = 299;
 
@@ -26,13 +28,16 @@ pub enum PebEnableError {
 
 pub struct LoaderSnapsGuard {
     key_path: String,
+    view_flag: win::Regsam,
     original_value: Option<(u32, Vec<u8>)>,
     restored: bool,
     test_noop: bool,
 }
 
 impl LoaderSnapsGuard {
-    pub fn enable_for_image(image_name: &str) -> Result<Self, u32> {
+    /// `machine` selects the registry view read by the target's own loader:
+    /// a 32-bit process sees the 32-bit view of `HKLM\SOFTWARE`.
+    pub fn enable_for_image(image_name: &str, machine: MachineType) -> Result<Self, u32> {
         if image_name.is_empty() {
             return Err(87);
         }
@@ -42,7 +47,12 @@ impl LoaderSnapsGuard {
         }
 
         let key_path = format!(r"{IFEO_BASE}\{image_name}");
-        let key = open_or_create_key(&key_path)?;
+        let view_flag = if machine == MachineType::X86 {
+            win::KEY_WOW64_32KEY
+        } else {
+            0
+        };
+        let key = open_or_create_key(&key_path, view_flag)?;
         let original_value = query_value_raw(key, GLOBAL_FLAG_VALUE)?;
 
         let current_flags = original_value
@@ -65,6 +75,7 @@ impl LoaderSnapsGuard {
 
         Ok(Self {
             key_path,
+            view_flag,
             original_value,
             restored: false,
             test_noop: false,
@@ -85,7 +96,7 @@ impl LoaderSnapsGuard {
             return Ok(());
         }
 
-        let key = open_or_create_key(&self.key_path)?;
+        let key = open_or_create_key(&self.key_path, self.view_flag)?;
         let result = match &self.original_value {
             Some((data_type, data)) => set_value_raw(key, GLOBAL_FLAG_VALUE, *data_type, data),
             None => delete_value(key, GLOBAL_FLAG_VALUE),
@@ -107,7 +118,7 @@ impl Drop for LoaderSnapsGuard {
 
 pub fn enable_via_peb(process: win::Handle) -> Result<PebEnableInfo, PebEnableError> {
     let os_version = win::rtl_get_version();
-    let info = PebEnableInfo {
+    let mut info = PebEnableInfo {
         os_version,
         ntglobalflag_offset: select_ntglobalflag_offset(os_version),
     };
@@ -123,14 +134,31 @@ pub fn enable_via_peb(process: win::Handle) -> Result<PebEnableInfo, PebEnableEr
         });
     }
 
-    match win::is_wow64_process_best_effort(process) {
-        Ok(true) => return Err(PebEnableError::UnsupportedWow64),
-        Ok(false) => {}
-        Err(code) => {
-            return Err(PebEnableError::Win32 { code, info });
+    let peb_base = match win::wow64_guest_machine(process) {
+        Ok(None) => native_peb_base(process),
+        Ok(Some(win::IMAGE_FILE_MACHINE_I386)) => {
+            // The 32-bit loader reads the 32-bit PEB, not the native one.
+            info.ntglobalflag_offset = PEB32_NT_GLOBAL_FLAG_OFFSET;
+            wow64_peb_base(process)
         }
+        Ok(Some(_)) => return Err(PebEnableError::UnsupportedWow64),
+        Err(code) => Err(code),
+    }
+    .map_err(|code| PebEnableError::Win32 { code, info })?;
+
+    let nt_global_flag_addr = (peb_base + info.ntglobalflag_offset) as win::Lpvoid;
+    let current = read_u32(process, nt_global_flag_addr as win::Lpcvoid)
+        .map_err(|code| PebEnableError::Win32 { code, info })?;
+    let updated = current | FLG_SHOW_LDR_SNAPS;
+    if updated != current {
+        write_u32(process, nt_global_flag_addr, updated)
+            .map_err(|code| PebEnableError::Win32 { code, info })?;
     }
 
+    Ok(info)
+}
+
+fn native_peb_base(process: win::Handle) -> Result<usize, u32> {
     let mut pbi: win::ProcessBasicInformation = unsafe { mem::zeroed() };
     let mut return_length: u32 = 0;
     let status = unsafe {
@@ -143,29 +171,33 @@ pub fn enable_via_peb(process: win::Handle) -> Result<PebEnableInfo, PebEnableEr
         )
     };
     if status < 0 {
-        return Err(PebEnableError::Win32 {
-            code: status as u32,
-            info,
-        });
+        return Err(status as u32);
     }
     if pbi.peb_base_address.is_null() {
-        return Err(PebEnableError::Win32 {
-            code: ERROR_INVALID_PARAMETER,
-            info,
-        });
+        return Err(ERROR_INVALID_PARAMETER);
     }
+    Ok(pbi.peb_base_address as usize)
+}
 
-    let nt_global_flag_addr =
-        (pbi.peb_base_address as usize + info.ntglobalflag_offset) as win::Lpvoid;
-    let current = read_u32(process, nt_global_flag_addr as win::Lpcvoid)
-        .map_err(|code| PebEnableError::Win32 { code, info })?;
-    let updated = current | FLG_SHOW_LDR_SNAPS;
-    if updated != current {
-        write_u32(process, nt_global_flag_addr, updated)
-            .map_err(|code| PebEnableError::Win32 { code, info })?;
+fn wow64_peb_base(process: win::Handle) -> Result<usize, u32> {
+    let mut peb32: usize = 0;
+    let mut return_length: u32 = 0;
+    let status = unsafe {
+        win::NtQueryInformationProcess(
+            process,
+            win::PROCESS_WOW64_INFORMATION_CLASS,
+            (&mut peb32 as *mut usize).cast::<std::ffi::c_void>(),
+            mem::size_of::<usize>() as u32,
+            &mut return_length as *mut u32,
+        )
+    };
+    if status < 0 {
+        return Err(status as u32);
     }
-
-    Ok(info)
+    if peb32 == 0 {
+        return Err(ERROR_INVALID_PARAMETER);
+    }
+    Ok(peb32)
 }
 
 pub(crate) fn test_peb_enable_override_result() -> Option<Result<PebEnableInfo, PebEnableError>> {
@@ -185,7 +217,7 @@ fn select_ntglobalflag_offset(os_version: Option<win::OsVersion>) -> usize {
     }
 }
 
-fn open_or_create_key(path: &str) -> Result<win::Hkey, u32> {
+fn open_or_create_key(path: &str, view_flag: win::Regsam) -> Result<win::Hkey, u32> {
     let mut key: win::Hkey = 0;
     let path_w = win::to_wide(OsStr::new(path));
     let status = unsafe {
@@ -195,7 +227,7 @@ fn open_or_create_key(path: &str) -> Result<win::Hkey, u32> {
             0,
             std::ptr::null_mut(),
             win::REG_OPTION_NON_VOLATILE,
-            win::KEY_READ | win::KEY_SET_VALUE,
+            win::KEY_READ | win::KEY_SET_VALUE | view_flag,
             std::ptr::null_mut(),
             &mut key as *mut win::Hkey,
             std::ptr::null_mut(),
@@ -372,6 +404,7 @@ fn test_ifeo_enable_override() -> Option<Result<LoaderSnapsGuard, u32>> {
     if value.eq_ignore_ascii_case("noop") || value.eq_ignore_ascii_case("ok-noop") {
         return Some(Ok(LoaderSnapsGuard {
             key_path: String::new(),
+            view_flag: 0,
             original_value: None,
             restored: false,
             test_noop: true,
@@ -420,12 +453,13 @@ fn parse_test_error_code(value: &str) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::{enable_via_peb, LoaderSnapsGuard, PebEnableError};
+    use crate::pe::MachineType;
     use crate::test_util::EnvVarGuard;
     use crate::win::TEST_ENV_LOCK;
 
     #[test]
     fn enable_for_image_rejects_empty_name() {
-        let result = LoaderSnapsGuard::enable_for_image("");
+        let result = LoaderSnapsGuard::enable_for_image("", MachineType::X64);
         assert_eq!(result.err(), Some(87));
     }
 
@@ -447,7 +481,7 @@ mod tests {
         let _lock = TEST_ENV_LOCK.lock().expect("test env lock poisoned");
         let _guard = EnvVarGuard::set("LOADWHAT_TEST_IFEO_ENABLE", "noop");
 
-        let guard = LoaderSnapsGuard::enable_for_image("app.exe")
+        let guard = LoaderSnapsGuard::enable_for_image("app.exe", MachineType::X64)
             .expect("noop IFEO override should succeed");
 
         assert!(guard.test_noop);
@@ -459,7 +493,7 @@ mod tests {
         let _lock = TEST_ENV_LOCK.lock().expect("test env lock poisoned");
         let _guard = EnvVarGuard::set("LOADWHAT_TEST_IFEO_ENABLE", "ok-noop");
 
-        let guard = LoaderSnapsGuard::enable_for_image("app.exe")
+        let guard = LoaderSnapsGuard::enable_for_image("app.exe", MachineType::X64)
             .expect("ok-noop IFEO override should succeed");
 
         assert!(guard.test_noop);
@@ -472,7 +506,7 @@ mod tests {
         let _guard = EnvVarGuard::set("LOADWHAT_TEST_IFEO_ENABLE", "fail:123");
 
         assert_eq!(
-            LoaderSnapsGuard::enable_for_image("app.exe").err(),
+            LoaderSnapsGuard::enable_for_image("app.exe", MachineType::X64).err(),
             Some(123)
         );
     }
@@ -484,7 +518,7 @@ mod tests {
         let _guard = EnvVarGuard::set("LOADWHAT_TEST_IFEO_ENABLE", "fail:0x0000007B");
 
         assert_eq!(
-            LoaderSnapsGuard::enable_for_image("app.exe").err(),
+            LoaderSnapsGuard::enable_for_image("app.exe", MachineType::X64).err(),
             Some(123)
         );
     }
@@ -495,7 +529,7 @@ mod tests {
         let _lock = TEST_ENV_LOCK.lock().expect("test env lock poisoned");
         let _enable_guard = EnvVarGuard::set("LOADWHAT_TEST_IFEO_ENABLE", "noop");
         let _restore_guard = EnvVarGuard::remove("LOADWHAT_TEST_IFEO_RESTORE");
-        let mut guard = LoaderSnapsGuard::enable_for_image("app.exe")
+        let mut guard = LoaderSnapsGuard::enable_for_image("app.exe", MachineType::X64)
             .expect("noop IFEO override should succeed");
 
         assert_eq!(guard.restore(), Ok(()));
@@ -508,7 +542,7 @@ mod tests {
         let _lock = TEST_ENV_LOCK.lock().expect("test env lock poisoned");
         let _enable_guard = EnvVarGuard::set("LOADWHAT_TEST_IFEO_ENABLE", "noop");
         let _restore_guard = EnvVarGuard::remove("LOADWHAT_TEST_IFEO_RESTORE");
-        let mut guard = LoaderSnapsGuard::enable_for_image("app.exe")
+        let mut guard = LoaderSnapsGuard::enable_for_image("app.exe", MachineType::X64)
             .expect("noop IFEO override should succeed");
 
         assert_eq!(guard.restore(), Ok(()));
@@ -522,7 +556,7 @@ mod tests {
         let _lock = TEST_ENV_LOCK.lock().expect("test env lock poisoned");
         let _enable_guard = EnvVarGuard::set("LOADWHAT_TEST_IFEO_ENABLE", "noop");
         let _restore_guard = EnvVarGuard::set("LOADWHAT_TEST_IFEO_RESTORE", "error:99");
-        let mut guard = LoaderSnapsGuard::enable_for_image("app.exe")
+        let mut guard = LoaderSnapsGuard::enable_for_image("app.exe", MachineType::X64)
             .expect("noop IFEO override should succeed");
 
         assert_eq!(guard.restore(), Err(99));

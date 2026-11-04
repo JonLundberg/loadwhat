@@ -26,7 +26,7 @@ Do not implement roadmap items unless explicitly requested.
 
 ## Non-negotiable constraints
 
-- Windows-only, x64-only.
+- Windows-only. The `loadwhat.exe` binary is x64-only; targets may be x64, or x86 under WOW64.
 - One executable; no external runtime dependencies.
 - Use Win32 Debug APIs directly:
   - `CreateProcessW` with `DEBUG_ONLY_THIS_PROCESS`
